@@ -78,6 +78,7 @@ class Match:
         self.round_no = 0
         self.state = "prep"          # prep / live / round_end / match_end（score 模式恒 live）
         self.timer = C.MATCH_BUY_TIME
+        self.live_t = 0.0            # 本回合「交火阶段」已进行的秒数（AI 用烟的开局冷静期依据）
         self.round_result = None     # win / lose / draw
 
         self.player_money = C.ECON_START
@@ -191,6 +192,7 @@ class Match:
         self.round_no += 1
         self.state = "prep"
         self.timer = C.MATCH_BUY_TIME
+        self.live_t = 0.0
         self.round_result = None
         self.player_dead = False
         self.player_hp = C.PLAYER_HP
@@ -212,6 +214,8 @@ class Match:
             a.roam = None
             a.smoke_charges = 0
             a.smoke_cd = 0.0
+            a.smoke_intent = 0.0
+            a.smoke_aim = None
             a.respawn_timer = 0.0
             a.invuln = 0.0
             a.crouch = False
@@ -230,6 +234,7 @@ class Match:
         """积分赛开局：无回合、无经济，全员直接上，状态恒 live。"""
         self.state = "live"
         self.timer = 0.0
+        self.live_t = 0.0
         self.round_result = None
         self.player_dead = False
         self.player_hp = C.PLAYER_HP
@@ -250,6 +255,8 @@ class Match:
             a.roam = None
             a.smoke_charges = 0
             a.smoke_cd = 0.0
+            a.smoke_intent = 0.0
+            a.smoke_aim = None
             a.respawn_timer = 0.0
             a.invuln = 0.0
             a.crouch = False
@@ -281,8 +288,10 @@ class Match:
         a.burst_left = 0
         a.muzzle = 0.0
         a.roam = None
-        a.smoke_charges = 0
+        a.smoke_charges = C.SMOKE_AI_SCORE_CHARGES if self.mode == "score" else 0
         a.smoke_cd = 0.0
+        a.smoke_intent = 0.0
+        a.smoke_aim = None
         a.respawn_timer = 0.0
         a.crouch = False
         a.h = C.BOT_H
@@ -302,6 +311,10 @@ class Match:
         # 烟仍在走（积分赛默认没有烟，这里只是保险）
         self.smokes.update(dt, self.gmap)
         self._smoke_direct_hits()
+
+        # 积分赛没有 prep/live 回合切换，这里手动累计「交火已进行时间」，
+        # 供 AI 用烟的开局冷静期（SMOKE_AI_CALM）判断用。
+        self.live_t += dt
 
         # 无敌倒计时 + 阵亡重生倒计时
         if self.player_dead:
@@ -347,9 +360,11 @@ class Match:
             if self.timer <= 0:
                 self.state = "live"
                 self.timer = C.MATCH_ROUND_TIME
+                self.live_t = 0.0
 
         elif self.state == "live":
             self.timer -= dt
+            self.live_t += dt
             for a in self.agents:
                 tune = self.enemy_tune if a.team == 1 else self.ally_tune
                 update_agent(self, a, dt, self.rng, tune)
@@ -585,7 +600,10 @@ class Match:
         """把玩家的真实位置/血量同步给影子 Agent —— 敌人 AI 是靠这个影子
         发现并瞄准你的，所以每帧都要同步，而且必须在 m.update() 之前调。"""
         p = self.player_agent
-        p.x, p.y = cam.x, cam.y
+        # 阵亡观战时相机会贴到队友身上，这里不能再跟着相机走，
+        # 否则"尸体"会被拖到队友位置（alive 已为 False，但位置仍然要留在死亡点）。
+        if not self.player_dead:
+            p.x, p.y = cam.x, cam.y
         p.hp = self.player_hp
         p.alive = not self.player_dead
 

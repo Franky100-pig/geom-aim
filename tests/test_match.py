@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pygame  # noqa: E402
 
+import ai  # noqa: E402
 import config as C  # noqa: E402
 import engine  # noqa: E402
 import hud  # noqa: E402
@@ -221,36 +222,47 @@ def test_ai_buys_smoke():
 
 
 def test_ai_throws_smoke():
-    """交火中 AI 朝可见敌人扔烟：场上有烟、队伍正确、携带量递减。"""
+    """交火中 AI 朝可见敌人扔烟：场上有烟、队伍正确、携带量递减。
+
+    用烟规则收紧之后，这里必须同时满足：过了开局冷静期、距离落在
+    SMOKE_AI_MIN_DIST~MAX_DIST 之间（近距离不扔，否则糊自己的视线）。
+    出手前还有一段随机延迟，所以循环要留够时间。
+    """
     rng = __import__("random").Random(55)
     m = Match(G, rng, "normal")
     m.state = "live"; m.timer = 999.0
+    m.live_t = C.SMOKE_AI_CALM + 1.0        # 已过开局冷静期
     a = next(x for x in m.agents if x.team == 0 and not x.is_player)
     e = next(x for x in m.agents if x.team == 1 and x.alive)
-    # 把敌人摆到 ally 正前方、清视线、距离落在 7~32 区间
-    ex, ey = a.x + 11.0, a.y
-    if not G.clear_line(a.x, a.y, ex, ey):
-        spot = G.random_free(rng, pad=2.0)
-        ex, ey = spot
-    e.x, e.y = ex, ey
-    a.yaw = math.atan2(ey - a.y, ex - a.x)
+    # 只留这一个敌人，避免 pick_target 选中更近的其他人导致距离不受控
+    for other in m.agents:
+        if other.team == 1 and other is not e:
+            other.alive = False
+    e.x, e.y = a.x + (C.SMOKE_AI_MIN_DIST + 6.0), a.y
+    a.yaw = math.atan2(e.y - a.y, e.x - a.x)
     a.smoke_charges = 2
     a.smoke_cd = 0.0
     m.smokes.clear()
 
-    before = a.smoke_charges
-    threw = False
-    for _ in range(60 * 4):
-        update_agent(m, a, 1 / 60, rng, m.ally_tune)
-        if any(g.team == 0 for g in m.smokes.grenades):
-            threw = True
-            break
-
-    check("AI 朝敌人扔出了烟", threw)
-    check("扔出的烟归属投掷者队伍（team 0）",
-          any(g.team == 0 for g in m.smokes.grenades))
-    check("扔完携带量递减", a.smoke_charges < before,
-          f"{before} -> {a.smoke_charges}")
+    old_vis, old_chance = ai._visible, C.SMOKE_AI_CHANCE
+    ai._visible = lambda mm, aa, ee: True   # 视线打桩，不依赖地图几何
+    C.SMOKE_AI_CHANCE = 1.0                 # 去掉概率抖动，专测"会不会扔"
+    try:
+        before = a.smoke_charges
+        threw = False
+        for _ in range(60 * 6):             # 留出随机延迟（最多 1.5s）的时间
+            update_agent(m, a, 1 / 60, rng, m.ally_tune)
+            if any(g.team == 0 for g in m.smokes.grenades):
+                threw = True
+                break
+        check("AI 朝敌人扔出了烟", threw)
+        check("扔出的烟归属投掷者队伍（team 0）",
+              any(g.team == 0 for g in m.smokes.grenades))
+        check("扔完携带量递减", a.smoke_charges < before,
+              f"{before} -> {a.smoke_charges}")
+    finally:
+        ai._visible = old_vis
+        C.SMOKE_AI_CHANCE = old_chance
 
 
 # ---------------------------------------------------------------- 自适应
@@ -317,14 +329,20 @@ def test_respawn_camera():
     check("live 阶段玩家镜头在我方出生点附近",
           math.hypot(g.cam.x - g.match.spawns[0][0],
                      g.cam.y - g.match.spawns[0][1]) < 3.0)
-    # 模拟死亡 + 观战：镜头被拽到队友处
+    # 阵亡：先原地倒地，DEATH_CAM_HOLD 秒之后才切到队友视角
     g.match.player_dead = True
     g.match.player_hp = 0
-    g.update(0.05)
+    x0, y0 = g.cam.x, g.cam.y
+    for _ in range(int(0.5 / 0.05)):
+        g.update(0.05)
+    check("阵亡后先倒地，镜头留在死亡点",
+          math.hypot(g.cam.x - x0, g.cam.y - y0) < 1e-9)
+    for _ in range(int((C.DEATH_CAM_HOLD + 0.3) / 0.05)):
+        g.update(0.05)
     spec = g.match.spectate_target()
     if spec is not None:
         moved = math.hypot(g.cam.x - spec.x, g.cam.y - spec.y) < 0.5
-        check("阵亡后镜头切到观战队友", moved)
+        check("倒地结束后镜头切到观战队友", moved)
     # 进入下一回合：镜头应被拽回我方出生点
     g.match.start_round()
     g.update(0.05)

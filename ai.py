@@ -107,6 +107,10 @@ class Agent:
         # 投掷物：AI 自己的烟雾弹携带量与冷却（玩家那套在 Game 上，这里只管 AI）
         self.smoke_charges = 0     # 本回合手里还有几颗
         self.smoke_cd = 0.0        # 投掷冷却（秒）
+        # 出手意图：场景判定通过先不扔，记下方向并起一个随机延迟，
+        # 延迟走完再按概率决定出不出手——避免所有人同一帧一起扔。
+        self.smoke_intent = 0.0    # >0 表示有 pending 的投掷意图，值即剩余延迟
+        self.smoke_aim = None      # (dx, dy) 打算扔的方向
 
         # 重生 / 无敌 / 蹲（积分赛用；回合赛里 invuln 恒为 0、crouch 影响命中轮廓）
         self.respawn_timer = 0.0
@@ -244,26 +248,77 @@ def _ai_do_throw(m, a, dx: float, dy: float):
     return True
 
 
-def ai_maybe_throw_smoke(m, a, rng: random.Random):
-    """AI 用烟的启发式（只在交火阶段、有携带量、冷却好了才考虑）：
+def _team_clouds(m, team: int) -> int:
+    """该队目前还在场上（含飞行中、未消散）的烟团数量。"""
+    return sum(1 for g in m.smokes.grenades
+               if not g.done and g.team == team)
 
-    * 正在和某个可见敌人交火 → 朝它扔，封掉对方视线（烟落在自己与目标之间）。
-      注意这也会挡住自己视线，所以属于防守/封路烟，符合 CS 习惯。
-    * 没有可见目标、正在推进时 → 偶尔朝前进方向扔，掩护走位。
-    携带量上限 2 + 冷却 5s 已经天然限制了频率，不会乱丢。
+
+def _smoke_plan(m, a, rng, dt: float):
+    """按场景判断要不要扔、往哪扔。返回 (dx, dy) 方向，None 表示这一帧不打算扔。
+
+    * 中远距离封锁长视线：烟落在自己与目标之间，切断这条枪线（封路烟）。
+    * 低血撤退：血量见底且已脱离交火时，封住最后看见敌人的方向。
+    * 掩护推进：无目标时低频朝前进方向扔，概率按 dt 计（不按帧）。
+    近距离（小于 SMOKE_AI_MIN_DIST）一律不扔——那个距离扔烟等于糊自己的脸。
     """
-    if a.smoke_charges <= 0 or a.smoke_cd > 0:
-        return
     tgt = a.target
+
     if tgt is not None and _visible(m, a, tgt):
         d = math.hypot(tgt.x - a.x, tgt.y - a.y)
-        if 7.0 <= d <= 32.0:                      # 太近会糊自己、太远没意义
-            _ai_do_throw(m, a, tgt.x - a.x, tgt.y - a.y)
-            return
-    if tgt is None and a.path and rng.random() < 0.02:
+        if C.SMOKE_AI_MIN_DIST <= d <= C.SMOKE_AI_MAX_DIST:
+            # 这条线已经被烟挡住了就别再浪费一颗
+            if not m.smokes.blocks(a.x, a.y, tgt.x, tgt.y):
+                return (tgt.x - a.x, tgt.y - a.y)
+        return None                       # 太近、太远、或已被烟封住
+
+    if a.hp <= C.SMOKE_AI_HP_RETREAT and a.last_seen is not None:
+        lx, ly = a.last_seen
+        if not m.smokes.blocks(a.x, a.y, lx, ly):
+            return (lx - a.x, ly - a.y)
+
+    if tgt is None and a.path and rng.random() < C.SMOKE_AI_ADV_RATE * dt:
         cx, cy = a.path[0]
-        dx, dy = (cx + 0.5) - a.x, (cy + 0.5) - a.y
-        _ai_do_throw(m, a, dx, dy)
+        return ((cx + 0.5) - a.x, (cy + 0.5) - a.y)
+
+    return None
+
+
+def ai_maybe_throw_smoke(m, a, rng: random.Random, dt: float = 0.0):
+    """AI 用烟：过闸 → 判场景 → 随机延迟 → 概率出手。
+
+    之前是「看见 7~32 格的敌人就立刻扔」，开局全员齐扔把地图铺满。
+    现在每一步都有闸，且出手时间被打散，不会再出现同时铺三团的情况。
+    """
+    # 1) 硬闸：弹药、冷却、开局冷静期、本队配额、自己已在烟里
+    if a.smoke_charges <= 0 or a.smoke_cd > 0:
+        return
+    if m.live_t < C.SMOKE_AI_CALM:
+        return
+    if _team_clouds(m, a.team) >= C.SMOKE_AI_TEAM_MAX:
+        return
+    if m.smokes.hides(a.x, a.y):
+        return
+
+    # 2) 有 pending 的投掷意图：等延迟走完再按概率决定
+    if a.smoke_intent > 0.0:
+        a.smoke_intent -= dt
+        if a.smoke_intent > 0.0:
+            return
+        a.smoke_intent = 0.0
+        aim, a.smoke_aim = a.smoke_aim, None
+        if aim is not None and rng.random() < C.SMOKE_AI_CHANCE:
+            _ai_do_throw(m, a, aim[0], aim[1])
+        return
+
+    # 3) 场景判定：得出一个想扔的方向
+    aim = _smoke_plan(m, a, rng, dt)
+    if aim is None:
+        return
+
+    # 4) 起随机延迟，把大家的出手时间错开
+    a.smoke_aim = aim
+    a.smoke_intent = rng.uniform(C.SMOKE_AI_DELAY_MIN, C.SMOKE_AI_DELAY_MAX)
 
 
 # ---------------------------------------------------------------- 开火
@@ -356,8 +411,8 @@ def update_agent(m, a, dt: float, rng: random.Random, tune: dict):
         a.last_seen = (tgt.x, tgt.y)
         a.lost_timer = 0.0
 
-    # 1.5) 有烟就考虑用（封视线 / 掩护推进）
-    ai_maybe_throw_smoke(m, a, rng)
+    # 1.5) 有烟就考虑用（封长视线 / 撤退掩护 / 低频推进掩护）
+    ai_maybe_throw_smoke(m, a, rng, dt)
 
     if tgt is not None:
         a.state = "engage"

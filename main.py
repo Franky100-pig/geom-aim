@@ -35,6 +35,17 @@ DIFF_ORDER = ("easy", "normal", "hard", "expert")
 DIFF_NAMES = {"easy": "简单", "normal": "普通", "hard": "困难", "expert": "专家"}
 
 
+def _lerp_angle(a: float, b: float, t: float) -> float:
+    """沿最短路径把角度 a 插值到 b，避免跨 ±pi 时绕一大圈。"""
+    d = (b - a + math.pi) % math.tau - math.pi
+    return a + d * t
+
+
+def _smoothstep(t: float) -> float:
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    return t * t * (3.0 - 2.0 * t)
+
+
 class Game:
     def __init__(self):
         pygame.init()
@@ -73,6 +84,7 @@ class Game:
         self.match: Match | None = None
         self.difficulty = C.AI_DIFF_DEFAULT
         self._last_round = 0
+        self._reset_death_cam()     # 倒地计时 / 观战目标 / 朝向插值进度
         self.running = True
         self.score = 0
         self.combo = 0
@@ -137,10 +149,18 @@ class Game:
         self.state = "play"
         self._grab(True)
 
+    def _reset_death_cam(self):
+        """阵亡镜头状态归位：倒地计时、当前观战目标、朝向插值进度。"""
+        self.death_t = 0.0
+        self._spec_agent = None
+        self._spec_blend = 1.0
+        self._spec_yaw0 = 0.0
+
     def _snap_to_spawn(self):
         """把玩家镜头摆回我方出生点、朝向敌方出生点。
         每回合开局（以及刚进对战）都要做，否则死之后观战队友，镜头会卡在队友
         位置上，复活时人直接刷在墙里或地图另一头。"""
+        self._reset_death_cam()
         if self.match is None:
             return
         sp = self.match.spawns[0]
@@ -192,6 +212,7 @@ class Game:
         self.smokes.clear()
         self.smoke_left = C.SMOKE_PRACTICE_MAX
         self.smoke_cd = 0.0
+        self._reset_death_cam()
         self.renderer.set_zoom(1.0)
         self.score = 0
         self.combo = 0
@@ -288,6 +309,12 @@ class Game:
                 self.on_key(ev.key)
 
     def look(self, dx: int, dy: int):
+        # 阵亡观战期间视角锁定在队友身上，鼠标一律不参与。
+        # 鼠标事件写的是 cam.yaw / cam.pitch_px 这两个"基准值"，而渲染读的是
+        # eff_yaw / eff_pitch_px；对战里 apply_to_camera 又排在阵亡分支之前，
+        # 于是每一下鼠标移动都被算进 eff_* 里，画面就跟着甩。
+        if self.match is not None and self.match.player_dead:
+            return
         cam, r = self.cam, self.renderer
         # 开镜时灵敏度乘子（倍率越大越稳）。其余模式不受影响。
         eff = self.sens * (C.SNIPER_SENS_MUL if self.player.ads else 1.0)
@@ -300,6 +327,45 @@ class Game:
         limit = C.PITCH_LIMIT * r.h
         cam.pitch_px = max(-limit, min(limit, cam.pitch_px))
         cam.yaw %= math.tau
+
+    def _dead_camera(self, dt: float, s):
+        """阵亡后的镜头：先原地倒地，停留 DEATH_CAM_HOLD 秒再切到队友第一视角。
+
+        * 倒地：位置不动，眼高平滑落到地面、视线压低。
+        * 观战：完全贴合队友，位置 / 朝向 / 俯仰全跟随，并且 eff_* 一起写——
+          渲染读的是 eff_yaw / eff_pitch_px，只写基准值是不生效的。
+        * 全程鼠标不参与（look() 已拦掉），所以不会再一动鼠标画面就甩。
+        """
+        cam = self.cam
+        self.death_t += dt
+
+        # —— 倒地阶段：还没到切视角的时间，或场上没有可观的队友 ——
+        if s is None or self.death_t < C.DEATH_CAM_HOLD:
+            k = _smoothstep(self.death_t / C.DEATH_FALL_TIME)
+            scale = self.renderer.h / 720.0
+            cam.z = (C.DEATH_EYE_H - C.EYE_HEIGHT) * k
+            cam.pitch_px = -C.DEATH_PITCH_PX * scale * k
+            cam.eff_yaw = cam.yaw
+            cam.eff_pitch_px = cam.pitch_px
+            return
+
+        # —— 观战阶段：完全贴合队友 ——
+        cam.x, cam.y = s.x, s.y
+        cam.z = 0.0
+        if s is not self._spec_agent:              # 换人了，起一段朝向插值
+            self._spec_agent = s
+            self._spec_yaw0 = cam.yaw
+            self._spec_blend = 0.0
+        if self._spec_blend < 1.0:
+            self._spec_blend = min(1.0, self._spec_blend
+                                   + dt / C.SPEC_SWITCH_TIME)
+            cam.yaw = _lerp_angle(self._spec_yaw0, s.yaw,
+                                  _smoothstep(self._spec_blend))
+        else:
+            cam.yaw = s.yaw
+        cam.pitch_px = 0.0
+        cam.eff_yaw = cam.yaw
+        cam.eff_pitch_px = 0.0
 
     def _match_press(self):
         """对战模式按下左键：栓动/半自动走单发，全自动交给 update 连发。"""
@@ -590,21 +656,24 @@ class Game:
                     and self.player.can_fire()):
                 self.fire()
         else:
-            # 阵亡观战队友；重生计时到后由 m.update 内 _respawn 拉起
+            # 阵亡：先原地倒地，到时间后由 _dead_camera 切到队友第一视角；
+            # 重生计时到后由 m.update 内的 _respawn 拉起。
+            # 这里刻意不调 apply_to_camera —— 那是玩家自己的后坐力，
+            # 不该加到被观战队友的第一视角上。
             self.player.firing = False
             s = m.spectate_target()
-            if s is not None:
-                self.cam.x, self.cam.y = s.x, s.y
-                self.cam.yaw = s.yaw
-                self.cam.z = 0.0
+            self._dead_camera(dt, s)
+            m.spectate = s if self.death_t >= C.DEATH_CAM_HOLD else None
             self.player.update_weapon(dt, self.renderer.h)
-            self.player.apply_to_camera(self.cam, self.renderer)
 
         m.update(dt)
 
-        # 刚复活的瞬间把镜头摆回我方出生点，否则会卡在队友视角
-        if was_dead and not m.player_dead:
-            self._snap_to_spawn()
+        # 死亡 / 重生的切换点：倒地计时与观战目标都要归位。
+        # 刚死那一帧走的还是存活分支，所以倒地从下一帧才开始计时。
+        if m.player_dead != was_dead:
+            self._reset_death_cam()
+            if not m.player_dead:
+                self._snap_to_spawn()      # 刚复活：镜头摆回我方出生点
 
         if self.smoke_cd > 0.0:
             self.smoke_cd = max(0.0, self.smoke_cd - dt)
@@ -623,6 +692,7 @@ class Game:
             self.smoke_left = 0                   # 对战里烟雾弹改经济购买，每回合重新买
             self.smokes.clear()                   # 上回合的烟不留到这回合
 
+        was_dead = m.player_dead
         if not m.player_dead:
             self.player.update_move(dt, self.cam, self.gmap, keys)
         self.player.update_jump(dt)
@@ -652,14 +722,15 @@ class Game:
 
         m.update(dt)
 
-        # 阵亡后第一视角观战还活着的队友
+        # 刚死 / 刚复活的那一帧：倒地计时与观战目标归位
+        if m.player_dead != was_dead:
+            self._reset_death_cam()
+
+        # 阵亡后先原地倒地，到时间再切到还活着的队友第一视角
         if m.player_dead:
             s = m.spectate_target()
-            m.spectate = s
-            if s is not None:
-                self.cam.x, self.cam.y = s.x, s.y
-                self.cam.yaw = s.yaw
-                self.cam.pitch_px = 0.0
+            self._dead_camera(dt, s)
+            m.spectate = s if self.death_t >= C.DEATH_CAM_HOLD else None
             self.player.firing = False
 
         # 烟由 m.update() 推进（Match 里已经调过 smokes.update），这里只管冷却
