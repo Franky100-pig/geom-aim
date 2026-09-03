@@ -19,6 +19,31 @@ pip install -r requirements.txt
 python3 main.py
 ```
 
+### macOS：提示"来自身份不明的开发者"无法打开
+
+浏览器下载的 ZIP 里的文件都带 macOS 隔离标记（quarantine），无签名的 `.command`
+脚本会被 Gatekeeper 拦下。任选其一解除：
+
+**方法 A（推荐，一次解决整个文件夹）**：打开「终端」，执行（文件夹不在下载目录就先 `cd` 过去，或把文件夹拖进终端窗口）。同时解隔离标记 + 补回可执行权限（GitHub 的 Download ZIP 不保留 +x）：
+
+```bash
+cd ~/Downloads/geom-aim-main
+xattr -cr .
+chmod +x 启动游戏.command start.sh
+```
+
+之后双击 `启动游戏.command` 即可。
+
+**方法 B（不敲命令）**：双击被拦后，打开 系统设置 → 隐私与安全性 → 滚到最下面，
+点「仍要打开」并输入密码。
+
+**方法 C**：用 `git clone` 拿代码（clone 下来的文件没有隔离标记，天然不触发此问题）：
+
+```bash
+git clone https://github.com/Franky100-pig/geom-aim.git
+cd geom-aim && ./启动游戏.command
+```
+
 启动后进入标题界面，按 `1` / `2` / `3` 选择模式。
 
 ## 模式
