@@ -552,19 +552,21 @@ def draw_title(surf, renderer, game):
     text(surf, "伪 3D 练枪房 / 3v3 回合制对战 / 5v5 积分赛", 17, (w * 0.5, h * 0.24),
          C.C_DIM, anchor="cm")
 
-    text(surf, "1    练习模式（靶场 5 种）", 24, (w * 0.5, h * 0.38), C.C_TEXT, anchor="cm")
-    text(surf, "2    对战模式  3v3  ·  best of 7 先到 4 胜", 24, (w * 0.5, h * 0.46),
+    text(surf, "1    练习模式（靶场 5 种）", 22, (w * 0.5, h * 0.36), C.C_TEXT, anchor="cm")
+    text(surf, "2    对战模式  3v3  ·  best of 7 先到 4 胜", 22, (w * 0.5, h * 0.43),
          C.C_ACCENT, anchor="cm")
-    text(surf, "3    积分赛  5v5  ·  先到 25 杀  ·  连续重生", 24, (w * 0.5, h * 0.54),
+    text(surf, "3    积分赛  5v5  ·  先到 25 杀  ·  连续重生", 22, (w * 0.5, h * 0.50),
          C.C_ACCENT, anchor="cm")
-    text(surf, "对战地图每局随机生成对称掩体（半高箱 / 高箱）", 14, (w * 0.5, h * 0.61),
-         C.C_DIM, anchor="cm")
+    text(surf, "4    创建局域网房间（人类 vs AI，最多 3 人）", 22, (w * 0.5, h * 0.57),
+         C.C_TEXT, anchor="cm")
+    text(surf, "5    加入局域网房间（输入主机 IP 或 .local）", 22, (w * 0.5, h * 0.64),
+         C.C_TEXT, anchor="cm")
 
     diff = game.difficulty
-    text(surf, f"[  ]    AI 难度： {DIFF_LABEL.get(diff, diff)}", 20,
-         (w * 0.5, h * 0.66), C.C_TEXT, anchor="cm")
+    text(surf, f"[  ]    AI 难度： {DIFF_LABEL.get(diff, diff)}", 18,
+         (w * 0.5, h * 0.72), C.C_TEXT, anchor="cm")
     text(surf, "WASD 移动 · 鼠标 转视角 · 左键 开火 · 右键 开镜 · 空格 跳 · Ctrl 蹲 · G 烟雾弹 · ESC 菜单",
-         14, (w * 0.5, h * 0.80), C.C_DIM, anchor="cm")
+         13, (w * 0.5, h * 0.82), C.C_DIM, anchor="cm")
     text(surf, "H 返回主菜单 · Q 退出", 15, (w * 0.5, h * 0.86), C.C_DIM, anchor="cm")
 
 

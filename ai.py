@@ -117,6 +117,15 @@ class Agent:
         self.invuln = 0.0
         self.crouch = False
 
+        # 联机：控制来源。"ai"=本地 AI 驱动；"local"=主机真人；"human"=联网真人。
+        # 只有 "ai" 才走 update_agent，其余由各自的输入驱动。
+        self.controller = "ai"
+        self.z = 0.0             # 离地高度（跳跃），投影用
+        self.vz = 0.0            # 垂直速度
+        self.remote_id = None     # 联网时分配的客户端编号
+        self.uid = 0             # 场内唯一编号（联机快照用它定位每个客户端自己的 Agent）
+        self.name = "BOT"
+
     @property
     def dead(self) -> bool:
         return not self.alive
@@ -387,7 +396,7 @@ def _try_fire(m, a, dt: float, rng: random.Random, tune: dict):
 # ---------------------------------------------------------------- 主更新
 
 def update_agent(m, a, dt: float, rng: random.Random, tune: dict):
-    if not a.alive or a.is_player:
+    if not a.alive or a.controller != "ai":
         return
     if m.state != "live":
         return                       # 买枪/结算阶段 AI 不动手

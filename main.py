@@ -1,10 +1,11 @@
-"""GEOM AIM —— 伪 3D 第一人称练枪房 + 3v3 回合制对战。
+"""GEOM AIM —— 伪 3D 第一人称练枪房 + 3v3 回合制对战 + 5v5 积分赛 + 局域网联机。
 
 运行：  python3 main.py
-标题界面： 1 练习模式    2 对战 3v3    3 积分赛 5v5    [ ] 调 AI 难度
+标题界面： 1 练习模式    2 对战 3v3    3 积分赛 5v5    4 创建房间    5 加入房间    [ ] 调 AI 难度
 练习：     WASD 移动 / 鼠标 转视角 / 左键 开火 / 右键 轻点开关镜（SNIPER）/ 1-5 换模式
 对战：     买枪阶段 1-5 买枪 / 左键 开火 / 右键 开镜 / ESC 菜单 / H 返回主菜单
 积分赛：   5v5 连续重生 TDM，1-5 自由换枪，先到 25 杀获胜 / Ctrl 蹲 / H 返回主菜单
+局域网：   4 建房（人类 vs AI，最多 3 人），5 输入主机 IP 或 xxx.local 加入
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import socket
 import sys
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
@@ -27,9 +29,10 @@ from effects import Effects  # noqa: E402
 from engine import Camera, Renderer, build_arena, cast_ray, cast_ray_block  # noqa: E402
 from match import Match  # noqa: E402
 from nades import SmokeField  # noqa: E402
+from net import Client, Host  # noqa: E402
 from player import Player  # noqa: E402
 from targets import MODE_HINT, MODE_KEYS, MODE_NAMES, Range  # noqa: E402
-from weapons import BUY_ORDER  # noqa: E402
+from weapons import BUY_ORDER, MATCH_WEAPONS  # noqa: E402
 
 DIFF_ORDER = ("easy", "normal", "hard", "expert")
 DIFF_NAMES = {"easy": "简单", "normal": "普通", "hard": "困难", "expert": "专家"}
@@ -86,6 +89,18 @@ class Game:
         self._last_round = 0
         self._reset_death_cam()     # 倒地计时 / 观战目标 / 朝向插值进度
         self.running = True
+
+        # 局域网联机状态
+        self.net_mode = "none"      # "none" | "host" | "client"
+        self.host = None
+        self.client = None
+        self.lobby_names: list = []
+        self.join_text = ""
+        self._net_acc = 0.0
+        self._pend_look = 0.0       # 待上行的鼠标 yaw 增量（客户端用）
+        self.client_weapon = "rifle"
+        self._smoke_pending = False  # 客户端 G 键边沿（一次性上报）
+        self.connect_error = ""
         self.score = 0
         self.combo = 0
         self.best_combo = 0
@@ -170,11 +185,17 @@ class Game:
         self.cam.pitch_px = 0.0
         self.player.vx = self.player.vy = 0.0
 
-    def start_score(self):
+    def start_score(self, seed=None):
         """开一局 5v5 积分赛（连续重生 TDM）：3×3 大地图、无经济、可随时换枪、
-        阵亡短暂延迟后带 3 秒无敌重生，先累计 25 杀的队伍获胜。你是 5 人之一。"""
+        阵亡短暂延迟后带 3 秒无敌重生，先累计 25 杀的队伍获胜。你是 5 人之一。
+
+        seed：地图随机种子。传入则掩体布局可复现（联机主机用，便于客户端
+        按同一颗种子重建完全相同的地图）；不传则每局随机。
+        """
+        arena_rng = random.Random(seed) if seed is not None else random.Random()
         self.gmap = build_arena(C.SCORE_MAP_TILES_X, C.SCORE_MAP_TILES_Y,
-                                C.SCORE_MAP_ROOM_W, C.SCORE_MAP_ROOM_H, cover=True)
+                                C.SCORE_MAP_ROOM_W, C.SCORE_MAP_ROOM_H,
+                                rng=arena_rng, cover=True)
         self.smokes.clear()
         self.smoke_left = 0           # 积分赛不配烟雾弹（保持纯枪战）
         self.smoke_cd = 0.0
@@ -193,6 +214,130 @@ class Game:
         self.state = "play"
         self._grab(True)
 
+    # ------------------------------------------------------------ 局域网联机
+
+    def _close_net(self):
+        if self.host is not None:
+            self.host.close()
+            self.host = None
+        if self.client is not None:
+            try:
+                self.client.leave()
+            except Exception:
+                pass
+            self.client = None
+        self.net_mode = "none"
+        self.lobby_names = []
+
+    def start_host(self):
+        """创建局域网房间（人类 vs AI，最多 3 人，空位补 AI）。"""
+        self._host_seed = random.randint(0, (1 << 31) - 1)
+        self.start_score(seed=self._host_seed)  # 建 5v5 积分赛 + 权威 Match
+        self.host = Host(self.gmap, self.match, seed=self._host_seed, cover=True)
+        self.net_mode = "host"
+        self.lobby_names = []
+        self.connect_error = ""
+        self.state = "host_lobby"               # 等朋友加入，按 Enter 开局
+        self._grab(False)
+
+    def _start_host_play(self):
+        self.state = "play"
+        self._grab(True)
+
+    def start_client(self, host_str: str):
+        """加入局域网房间：host_str 可以是 IP 或 Frankys-Mac.local 这类主机名。"""
+        self.connect_error = ""
+        c = Client(host_str.strip(), name="你")
+        welcome = c.connect(timeout=5.0)
+        if welcome is None:
+            self.connect_error = "连接失败：主机未开 / 地址错 / 房间已满"
+            try:
+                c.leave()
+            except Exception:
+                pass
+            self.state = "title"
+            self._grab(False)
+            return
+        # 客户端不传整张网格：按主机给的种子 + 尺寸确定性重建同一张地图
+        g = build_arena(welcome["tiles_x"], welcome["tiles_y"],
+                        welcome["room_w"], welcome["room_h"],
+                        rng=random.Random(welcome["seed"]),
+                        cover=welcome.get("cover", True))
+        self.gmap = g
+        # 客户端不跑模拟，Match 只作数据容器，每帧被快照覆盖
+        self.match = Match(g, random.Random(), self.difficulty, self.smokes, mode="score")
+        self.client = c
+        self.client_uid = welcome.get("uid", 0)   # 主机分配的、专属于本机的 Agent 编号
+        self.net_mode = "client"
+        self.client_weapon = "rifle"
+        self.state = "client"
+        self._grab(True)
+
+    def _update_host(self, dt: float):
+        self._update_score_match(dt)           # 主机本地玩家走原流程
+        self._net_acc += dt
+        if self._net_acc >= 1.0 / C.NET_TICK_HZ:
+            self._net_acc = 0.0
+            if self.host is not None:
+                self.host.broadcast(self.match.snapshot())
+
+    def _update_client(self, dt: float):
+        c = self.client
+        if c is None:
+            return
+        keys = pygame.key.get_pressed()
+        mbt = pygame.mouse.get_pressed()
+        mvx = (1 if keys[pygame.K_w] else 0) - (1 if keys[pygame.K_s] else 0)
+        mvy = (1 if keys[pygame.K_d] else 0) - (1 if keys[pygame.K_a] else 0)
+        crouch = bool(keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL])
+        jump = bool(keys[pygame.K_SPACE])
+        fire = bool(mbt[0])
+        smoke = self._smoke_pending
+        self._smoke_pending = False
+        inp = dict(mvx=mvx, mvy=mvy, crouch=crouch, jump=jump, fire=fire,
+                   weapon=self.client_weapon, smoke=smoke, dyaw=self._pend_look)
+        self._pend_look = 0.0
+
+        self._net_acc += dt
+        if self._net_acc >= 1.0 / C.NET_INPUT_HZ:
+            self._net_acc = 0.0
+            c.send_input(inp)
+
+        was_dead = self.match.player_dead
+        c.pump()
+        if c.snap is not None:
+            self.match.apply_snapshot(c.snap)
+        # 联机客户端要跟随「自己这台机器」对应的 Agent，而不是主机玩家。
+        # 主机在 welcome 里给了本机专属 uid，快照里每个 Agent 带 uid，据此定位。
+        me = None
+        for a in self.match.agents:
+            if getattr(a, "uid", None) == self.client_uid:
+                me = a
+                break
+        if me is not None:
+            self.match.player_agent = me
+            self.match.player_dead = not me.alive
+            self.match.player_hp = me.hp
+        if self.match.player_dead != was_dead:
+            self._reset_death_cam()
+
+        m = self.match
+        la = me if me is not None else m.player_agent
+        if not m.player_dead:
+            self.cam.x, self.cam.y = la.x, la.y
+            self.cam.yaw = la.yaw                       # yaw 取服务器权威值
+            self.cam.z = la.z - (C.CROUCH_EYE_DROP if la.crouch else 0.0)
+            self.cam.apply_recoil(0.0, 0.0)
+            self.player.crouch = la.crouch
+            self.player.weapon = la.weapon
+            self.player.ads = False
+        else:
+            s = m.spectate_target()
+            self._dead_camera(dt, s)
+            m.spectate = s if self.death_t >= C.DEATH_CAM_HOLD else None
+            self.player.firing = False
+        self.fx.update(dt)
+
     def to_title(self):
         """返回标题界面：退出当前练习 / 对战，回到选模式界面，并释放鼠标。
 
@@ -200,6 +345,7 @@ class Game:
         所以这里必须把大地图重建回来，否则回到标题会停在上一局的小地图上。
         玩家、连击、烟雾、缩放全部归位，等效于刚启动程序时的标题状态。
         """
+        self._close_net()
         self.match = None
         self.gmap = build_arena(C.ARENA_TILES_X, C.ARENA_TILES_Y,
                                 C.ARENA_ROOM_W, C.ARENA_ROOM_H)
@@ -254,7 +400,14 @@ class Game:
             self.fps_smooth += (cur - self.fps_smooth) * 0.06
 
             self.handle_events()
-            if self.state == "play":
+            if self.net_mode == "host":
+                self.host.poll()
+                self.lobby_names = self.host.names()
+                if self.state == "play":
+                    self._update_host(dt)
+            elif self.net_mode == "client":
+                self._update_client(dt)
+            elif self.state == "play":
                 self.update(dt)
             self.draw()
         pygame.quit()
@@ -266,6 +419,21 @@ class Game:
             if ev.type == pygame.QUIT:
                 self.running = False
                 return
+
+            # 加入房间：在这里拦截所有按键，做地址输入
+            if self.state == "join_input":
+                if ev.type == pygame.KEYDOWN:
+                    if ev.key == pygame.K_ESCAPE:
+                        self.state = "title"
+                        self._grab(False)
+                    elif ev.key == pygame.K_RETURN:
+                        if self.join_text.strip():
+                            self.start_client(self.join_text)
+                    elif ev.key == pygame.K_BACKSPACE:
+                        self.join_text = self.join_text[:-1]
+                    elif ev.unicode and ev.unicode.isprintable() and len(self.join_text) < 48:
+                        self.join_text += ev.unicode
+                continue
 
             elif ev.type in (pygame.WINDOWFOCUSLOST, pygame.WINDOWMINIMIZED):
                 # 切到别的窗口 / 最小化时放开鼠标。不然鼠标被 grab 锁在窗口里，
@@ -280,8 +448,17 @@ class Game:
                     self._grab(False)
 
             elif ev.type == pygame.MOUSEMOTION:
-                if self.state == "play":
+                if self.state == "play" and self.net_mode == "none":
                     self.look(ev.rel[0], ev.rel[1])
+                elif self.state == "client":
+                    # 客户端：yaw 交给服务器，这里只累积待上行的 yaw 增量，
+                    # 并本地直接改俯仰（pitch 纯视觉，服务器不需要）。
+                    eff = self.sens * (C.SNIPER_SENS_MUL if self.player.ads else 1.0)
+                    self._pend_look += ev.rel[0] * eff
+                    sign = 1.0 if C.INVERT_Y else -1.0
+                    self.cam.pitch_px += sign * ev.rel[1] * eff * self.renderer.h * self.renderer.vs
+                    limit = C.PITCH_LIMIT * self.renderer.h
+                    self.cam.pitch_px = max(-limit, min(limit, self.cam.pitch_px))
 
             elif ev.type == pygame.MOUSEBUTTONDOWN:
                 if self.state != "play":
@@ -389,6 +566,32 @@ class Game:
             self.to_title()
             return
 
+        # ---------- 房间主人：开局 / 取消 ----------
+        if self.state == "host_lobby":
+            if key in (pygame.K_RETURN, pygame.K_SPACE):
+                self._start_host_play()
+            elif key == pygame.K_ESCAPE:
+                self.to_title()
+            return
+
+        # ---------- 客户端（键盘只管换枪 / 扔烟 / 退出） ----------
+        if self.net_mode == "client" and self.state == "client":
+            if pygame.K_1 <= key <= pygame.K_5:
+                idx = key - pygame.K_1
+                if idx < len(BUY_ORDER):
+                    self.client_weapon = BUY_ORDER[idx]
+                    w = MATCH_WEAPONS.get(self.client_weapon)
+                    if w:
+                        self.player.weapon = w
+                    self.audio.play("spawn")
+                return
+            if key == pygame.K_g:
+                self._smoke_pending = True
+                return
+            if key == pygame.K_ESCAPE:
+                self.to_title()
+            return
+
         # ---------- 标题界面 ----------
         if self.state == "title":
             if key == pygame.K_1:
@@ -397,6 +600,12 @@ class Game:
                 self.start_match()
             elif key == pygame.K_3:
                 self.start_score()
+            elif key == pygame.K_4:
+                self.start_host()
+            elif key == pygame.K_5:
+                self.state = "join_input"
+                self.join_text = ""
+                self._grab(False)
             elif key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET):
                 d = -1 if key == pygame.K_LEFTBRACKET else 1
                 i = DIFF_ORDER.index(self.difficulty)
@@ -950,7 +1159,7 @@ class Game:
 
         scoped = self.player.ads and (self.match is not None
                                       or self.range.mode == "sniper")
-        if self.state == "play":
+        if self.state in ("play", "client"):
             if scoped and self.player.weapon.zoom > 1.01:
                 hud.draw_scope(surf, r, self.player)   # 开镜：圆形镜框 + 十字线，盖住普通准星
             else:
@@ -974,7 +1183,62 @@ class Game:
             hud.text(surf, f"{self.fps_smooth:.0f} FPS", 14,
                      (r.w - 24, r.h - 26), C.C_DIM, anchor="br")
 
+        if self.state == "host_lobby":
+            self._draw_lobby(surf)
+        elif self.state == "join_input":
+            self._draw_join(surf)
+
         pygame.display.flip()
+
+    # ------------------------------------------------------------ 联机界面
+
+    def _draw_lobby(self, surf):
+        w, h = self.renderer.w, self.renderer.h
+        veil = pygame.Surface((w, h), pygame.SRCALPHA)
+        veil.fill((6, 9, 15, 150))
+        surf.blit(veil, (0, 0))
+        hud.text(surf, "房间已创建 · 等待好友加入", 34, (w * 0.5, h * 0.22),
+                 C.C_ACCENT, anchor="cm")
+        lines = ["已加入："] + [f"  · {n}" for n in self.lobby_names] + ["（你 = 主机）"]
+        y = h * 0.36
+        for ln in lines:
+            hud.text(surf, ln, 22, (w * 0.5, y), C.C_TEXT, anchor="cm")
+            y += 34
+        hud.text(surf, "按 Enter / 空格 开始对战", 24, (w * 0.5, h * 0.74),
+                 C.C_ALLY_HUD, anchor="cm")
+        hud.text(surf, "ESC 返回标题", 16, (w * 0.5, h * 0.80),
+                 C.C_DIM, anchor="cm")
+        ip = ""
+        try:
+            import net
+            addrs = net.local_addresses()
+            if addrs:
+                ip = addrs[0]
+        except Exception:
+            pass
+        if ip:
+            hud.text(surf, f"好友请加入： {ip}   （或 {socket.gethostname()}.local）",
+                     16, (w * 0.5, h * 0.88), C.C_DIM, anchor="cm")
+
+    def _draw_join(self, surf):
+        w, h = self.renderer.w, self.renderer.h
+        veil = pygame.Surface((w, h), pygame.SRCALPHA)
+        veil.fill((6, 9, 15, 200))
+        surf.blit(veil, (0, 0))
+        hud.text(surf, "加入局域网房间", 34, (w * 0.5, h * 0.30),
+                 C.C_ACCENT, anchor="cm")
+        hud.text(surf, "输入主机的 IP 或 xxx.local 主机名，回车连接：", 16,
+                 (w * 0.5, h * 0.40), C.C_DIM, anchor="cm")
+        box = pygame.Rect(int(w * 0.5 - 220), int(h * 0.46), 440, 44)
+        pygame.draw.rect(surf, (30, 40, 60), box)
+        pygame.draw.rect(surf, C.C_ACCENT, box, 2)
+        hud.text(surf, self.join_text or "（在此输入）", 22,
+                 (w * 0.5, h * 0.46 + 22), C.C_TEXT, anchor="cm")
+        if self.connect_error:
+            hud.text(surf, self.connect_error, 16, (w * 0.5, h * 0.62),
+                     C.C_ENEMY_HUD, anchor="cm")
+        hud.text(surf, "回车 连接    ESC 返回", 16, (w * 0.5, h * 0.70),
+                 C.C_DIM, anchor="cm")
 
 
 def main():

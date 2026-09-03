@@ -279,3 +279,14 @@ ECON_LOSS_BASE = 1400
 ECON_LOSS_STEP = 500
 ECON_LOSS_MAX = 3400
 ECON_MAX = 16000
+
+# ---------------- 局域网联机 ----------------
+NET_PORT = 8765            # 主机 UDP 监听端口
+NET_TICK_HZ = 30          # 主机广播快照频率
+NET_INPUT_HZ = 60         # 客户端上行输入频率
+NET_TIMEOUT = 4.0         # 多少秒没收到某客户端输入就踢掉
+NET_MAX_HUMANS = 3        # 一个房间最多真人数量（含主机）
+ROOM_TEAM_SIZE = 5        # 每队人数（空位由 AI 补）
+HUMAN_MOVE_SPEED = 4.2    # 真人移动速度（与 AI 一致）
+HUMAN_JUMP_V = 5.2        # 真人跳跃初速度（世界单位/秒）
+HUMAN_GRAVITY = 16.0      # 真人重力（用于跳跃下落）

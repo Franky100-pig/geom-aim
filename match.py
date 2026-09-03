@@ -18,7 +18,7 @@ import random
 
 import config as C
 from ai import Agent, update_agent
-from engine import clamp
+from engine import clamp, cast_ray_block
 from nades import SmokeField
 from weapons import BUY_ORDER, MATCH_WEAPONS, match_weapon
 
@@ -86,6 +86,12 @@ class Match:
         self.player_dead = False
         self.spectate: Agent | None = None
 
+        # 联机：真人（含主机）的输入都塞进这个字典，由 _drive_humans 每帧驱动。
+        # key = Agent 对象，value = 输入字典（见 net.py / Game 的 _pack_input）。
+        self.human_inputs: dict = {}
+        self.human_count = 1          # 已占用的真人 slot 数（含主机，开局就是 1）
+        self._uid_seq = 0             # Agent.uid 自增计数器（联机快照用它定位每个客户端自己的 Agent）
+
         # 积分赛（TDM）状态
         self.team_size = C.SCORE_TEAM_SIZE if mode == "score" else 3
         self.team_kills = [0, 0]
@@ -102,6 +108,7 @@ class Match:
         self._last_d = 0
 
         self._build_agents()
+        self.player_agent.controller = "local"   # 主机真人（区别于 AI / 联网真人）
         self._apply_tune()
         if mode == "score":
             self._start_score()
@@ -114,6 +121,7 @@ class Match:
         # 玩家影子：位置/血量由 Game 同步，AI 逻辑不会去驱动它
         p = Agent(0, self.spawns[0][0], self.spawns[0][1], is_player=True)
         p.weapon = match_weapon("pistol")
+        p.uid = self._next_uid()
         self.player_agent = p
         self.agents.append(p)
 
@@ -130,6 +138,7 @@ class Match:
                 a = Agent(team, x, y)
                 a.weapon = match_weapon("pistol")
                 a.money = C.ECON_START
+                a.uid = self._next_uid()
                 self.agents.append(a)
 
     def _place_all(self):
@@ -151,6 +160,135 @@ class Match:
                 a.path = []
                 a.goal_cell = None
                 a.roam = None
+
+    # ------------------------------------------------------------ 联机真人
+
+    def _next_uid(self) -> int:
+        """分配一个场内唯一的 Agent 编号（联机快照用它定位每个客户端自己的 Agent）。"""
+        u = self._uid_seq
+        self._uid_seq += 1
+        return u
+
+    def add_human_agent(self, team: int, name: str) -> "Agent":
+        """加入一个联网真人（默认放我方队伍，与 AI 队友混编）。返回新建的 Agent。"""
+        base = self.spawns[team]
+        ox = self.rng.uniform(-2.0, 2.0)
+        oy = self.rng.uniform(-2.0, 2.0)
+        x, y = base[0] + ox, base[1] + oy
+        if self.gmap.blocked(x, y, 0.4):
+            x, y = base
+        a = Agent(team, x, y)
+        a.weapon = match_weapon("rifle")
+        a.controller = "human"
+        a.is_player = False
+        a.name = name
+        a.uid = self._next_uid()
+        self.agents.append(a)
+        self.human_count += 1
+        return a
+
+    def remove_human_agent(self, a: "Agent"):
+        """踢掉一个联网真人（超时/断线时）。"""
+        if a in self.agents:
+            self.agents.remove(a)
+        self.human_inputs.pop(a, None)
+        self.human_count = max(1, self.human_count - 1)
+
+    def _drive_humans(self, dt: float):
+        """把 human_inputs 里的输入应用到对应真人 Agent 上（主机每帧调用）。"""
+        for a in self.agents:
+            if a.controller != "human":
+                continue
+            inp = self.human_inputs.get(a)
+            if inp is None:
+                continue
+            self._apply_human(a, inp, dt)
+
+    def _apply_human(self, a: "Agent", inp: dict, dt: float):
+        if not a.alive:
+            return
+        speed = C.HUMAN_MOVE_SPEED
+        fx, fy = math.cos(a.yaw), math.sin(a.yaw)        # 前
+        rx, ry = -math.sin(a.yaw), math.cos(a.yaw)       # 右
+        mvx = float(inp.get("mvx", 0.0))
+        mvy = float(inp.get("mvy", 0.0))
+        nx = a.x + (fx * mvx + rx * mvy) * speed * dt
+        ny = a.y + (fy * mvx + ry * mvy) * speed * dt
+        # 碰撞：用 0.35 半径近似人，撞墙就不动（不穿墙）
+        if not self.gmap.blocked(nx, ny, 0.35) and not self.gmap.blocked(nx, a.y, 0.35):
+            a.x = nx
+        if not self.gmap.blocked(a.x, ny, 0.35) and not self.gmap.blocked(nx, ny, 0.35):
+            a.y = ny
+
+        dyaw = float(inp.get("dyaw", 0.0))
+        a.yaw = (a.yaw + dyaw) % math.tau
+
+        a.crouch = bool(inp.get("crouch", False))
+        a.h = C.BOT_H * C.CROUCH_H_MUL if a.crouch else C.BOT_H
+
+        # 跳跃（简单重力积分）
+        if bool(inp.get("jump", False)) and a.z <= 0.0 and a.vz <= 0.0:
+            a.vz = C.HUMAN_JUMP_V
+        a.vz -= C.HUMAN_GRAVITY * dt
+        a.z += a.vz * dt
+        if a.z <= 0.0:
+            a.z = 0.0
+            a.vz = 0.0
+
+        w = inp.get("weapon")
+        if w and str(w) in MATCH_WEAPONS:
+            a.weapon = MATCH_WEAPONS[str(w)]
+
+        if bool(inp.get("fire", False)) and a.fire_cd <= 0.0:
+            self.fire_human(a)
+
+        if bool(inp.get("smoke", False)) and a.smoke_charges > 0:
+            eye = a.h * 0.5 + a.z
+            dx, dy = math.cos(a.yaw), math.sin(a.yaw)
+            if self.smokes.throw(a.x, a.y, eye, dx, dy, team=a.team) is not None:
+                a.smoke_charges -= 1
+
+        if a.fire_cd > 0:
+            a.fire_cd = max(0.0, a.fire_cd - dt)
+        if a.muzzle > 0:
+            a.muzzle = max(0.0, a.muzzle - dt)
+
+    def fire_human(self, a: "Agent"):
+        """真人开火：从 Agent 当前位置/朝向做命中判定（几何与玩家 _do_shot 一致）。"""
+        eye_z = a.h * 0.5 + a.z
+        dx, dy = math.cos(a.yaw), math.sin(a.yaw)
+        pux, puy = -math.sin(a.yaw), math.cos(a.yaw)
+        # 打对面队伍
+        pool = ([x for x in self.agents if x.team != a.team and x.alive]
+                if a.team == 0 else [x for x in self.agents if x.team == 0 and x.alive])
+        best, best_d, headshot = None, 1e9, False
+        for t in pool:
+            rx, ry = t.x - a.x, t.y - a.y
+            depth = rx * dx + ry * dy
+            if depth <= 0.35 or depth >= best_d:
+                continue
+            lateral = rx * pux + ry * puy
+            if abs(lateral) > t.w * 0.5:
+                continue
+            h_aim = t.h * 0.62
+            if h_aim < 0.0 or h_aim > t.h:
+                continue
+            slope = (h_aim - eye_z) / depth
+            wall_d = cast_ray_block(self.gmap, a.x, a.y, dx, dy, eye_z, slope)
+            if depth >= wall_d:
+                continue
+            if not self.gmap.clear_line_h(a.x, a.y, eye_z, t.x, t.y, t.h):
+                continue
+            if self.smokes.blocks(a.x, a.y, t.x, t.y):
+                continue
+            scale = t.w / C.BOT_W
+            head = (C.HEAD_BOT * t.h <= h_aim <= C.HEAD_TOP * t.h
+                    and abs(lateral) <= C.HEAD_HALF_W * scale)
+            best, best_d, headshot = t, depth, head
+        if best is not None:
+            self.apply_damage(a, best, headshot)
+        a.muzzle = 0.12
+        a.fire_cd = a.weapon.fire_interval if a.weapon else 0.12
 
     # ------------------------------------------------------------ 难度
 
@@ -327,6 +465,8 @@ class Match:
                 if a.respawn_timer <= 0:
                     self._respawn(a)
 
+        self._drive_humans(dt)
+
         for a in self.agents:
             tune = self.enemy_tune if a.team == 1 else self.ally_tune
             update_agent(self, a, dt, self.rng, tune)
@@ -365,6 +505,7 @@ class Match:
         elif self.state == "live":
             self.timer -= dt
             self.live_t += dt
+            self._drive_humans(dt)
             for a in self.agents:
                 tune = self.enemy_tune if a.team == 1 else self.ally_tune
                 update_agent(self, a, dt, self.rng, tune)
@@ -630,3 +771,71 @@ class Match:
         if self.mode == "score":
             return self.team_kills[0] > self.team_kills[1]
         return self.score[0] > self.score[1]
+
+    # ------------------------------------------------------------ 联机快照
+
+    def snapshot(self) -> dict:
+        """把全场状态压成可 JSON 化的字典，发给客户端。"""
+        ags = []
+        for i, a in enumerate(self.agents):
+            ags.append(dict(
+                id=i, uid=a.uid, team=a.team, x=round(a.x, 3), y=round(a.y, 3),
+                yaw=round(a.yaw, 4), z=round(a.z, 3),
+                hp=round(a.hp, 1), alive=a.alive, crouch=a.crouch,
+                flash=round(a.flash, 2), muzzle=round(a.muzzle, 2),
+                invuln=round(a.invuln, 2),
+                weapon=(a.weapon.name if a.weapon else "rifle"),
+                controller=a.controller, is_local=a.is_player, name=a.name,
+            ))
+        return dict(
+            mode=self.mode,
+            team_kills=self.team_kills[:],
+            score=self.score[:],
+            player_hp=round(self.player_hp, 1),
+            player_dead=self.player_dead,
+            player_respawn=round(self.player_respawn, 2),
+            state=self.state,
+            feed=[[t, list(c), round(ttl, 2)] for t, c, ttl in self.feed],
+            stats=dict(self.stats),
+            agents=ags,
+            smokes=self.smokes.snapshot(),
+        )
+
+    def apply_snapshot(self, snap: dict):
+        """客户端：用主机快照刷新本地状态（不模拟，只渲染/交互）。"""
+        ags_in = snap["agents"]
+        for ad in ags_in:
+            i = ad["id"]
+            while i >= len(self.agents):
+                na = Agent(ad["team"], ad["x"], ad["y"])
+                na.controller = ad["controller"]
+                na.is_player = ad["is_local"]
+                na.uid = ad["uid"]
+                self.agents.append(na)
+            a = self.agents[i]
+            a.team = ad["team"]
+            a.uid = ad["uid"]
+            a.x, a.y, a.yaw, a.z = ad["x"], ad["y"], ad["yaw"], ad["z"]
+            a.hp, a.alive = ad["hp"], ad["alive"]
+            a.crouch, a.flash, a.muzzle = ad["crouch"], ad["flash"], ad["muzzle"]
+            a.invuln = ad["invuln"]
+            a.controller, a.is_player = ad["controller"], ad["is_local"]
+            a.name = ad["name"]
+            a.weapon = MATCH_WEAPONS.get(ad["weapon"], match_weapon("rifle"))
+        # 掉线的真人其 Agent 不再出现在快照里 → 截掉，避免残影
+        if len(self.agents) > len(ags_in):
+            self.agents = self.agents[:len(ags_in)]
+        # 把本地玩家指向快照里标记为 is_local 的 Agent（联机客户端会再覆盖成自己的 uid）
+        for a in self.agents:
+            if a.is_player:
+                self.player_agent = a
+                break
+        self.team_kills = snap["team_kills"][:]
+        self.score = snap["score"][:]
+        self.player_hp = snap["player_hp"]
+        self.player_dead = snap["player_dead"]
+        self.player_respawn = snap["player_respawn"]
+        self.state = snap["state"]
+        self.feed = [[t, tuple(c), ttl] for t, c, ttl in snap["feed"]]
+        self.stats = dict(snap["stats"])
+        self.smokes.apply_snapshot(snap["smokes"])

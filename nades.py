@@ -197,6 +197,25 @@ class SmokeField:
     def clear(self):
         self.grenades.clear()
 
+    # ------------------------------------------------------------ 联机快照
+    # 客户端不需要模拟烟的物理，只要能"渲染 + 挡视线"即可，所以用极简占位对象。
+
+    def snapshot(self) -> list:
+        """把当前所有烟团压成可 JSON 化的字典列表。"""
+        out = []
+        for g in self.grenades:
+            out.append(dict(x=g.x, y=g.y, team=g.team, resting=g.resting,
+                            r=g._r, cx=g.cloud_x, cy=g.cloud_y))
+        return out
+
+    def apply_snapshot(self, data: list):
+        """用主机发来的快照重建烟团（客户端用，不做物理推进）。"""
+        self.grenades = []
+        for d in data:
+            g = SnapshotSmoke(d["x"], d["y"], d["team"], d["resting"],
+                              d["r"], d["cx"], d["cy"])
+            self.grenades.append(g)
+
     # ------------------------------------------------------------ 查询
 
     def blocks(self, x0: float, y0: float, x1: float, y1: float) -> bool:
@@ -266,3 +285,27 @@ class SmokeField:
         rad = max(2.0, 0.09 * renderer.h * renderer.vs / depth)
         pygame.draw.circle(surf, C.C_SMOKE, (int(sx), int(sy)), int(rad))
         pygame.draw.circle(surf, C.C_WARN, (int(sx), int(sy)), int(rad), 1)
+
+
+class SnapshotSmoke:
+    """客户端用的烟团占位对象：只保留渲染/挡视线必需的字段，不做物理推进。"""
+
+    def __init__(self, x, y, team, resting, r, cx, cy):
+        self.x, self.y = x, y
+        self.team = team
+        self.resting = resting
+        self._r = r
+        self.cloud_x, self.cloud_y = cx, cy
+        self.z = 0.0
+        self.done = False
+        self.t = 0.0
+
+    @property
+    def cloud_r(self) -> float:
+        return self._r
+
+    @property
+    def density(self) -> float:
+        if self._r <= 0.0:
+            return 0.0
+        return min(1.0, self._r / C.SMOKE_RADIUS)
