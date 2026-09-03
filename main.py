@@ -448,7 +448,9 @@ class Game:
                     self._grab(False)
 
             elif ev.type == pygame.MOUSEMOTION:
-                if self.state == "play" and self.net_mode == "none":
+                # 单机（none）和主机（host）都走本地 look()：主机跑权威模拟，
+                # 自己就是普通玩家。只有客户端（client）走「上行增量」路线。
+                if self.state == "play" and self.net_mode in ("none", "host"):
                     self.look(ev.rel[0], ev.rel[1])
                 elif self.state == "client":
                     # 客户端：yaw 交给服务器，这里只累积待上行的 yaw 增量，
