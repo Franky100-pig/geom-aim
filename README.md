@@ -4,7 +4,15 @@
 
 ## 运行
 
-macOS：双击 `启动游戏.command`，或命令行：
+各系统双击 / 运行对应启动器，脚本会自动检查并安装依赖后再启动：
+
+| 系统 | 启动器 |
+| --- | --- |
+| macOS | 双击 `启动游戏.command` |
+| Windows | 双击 `start.bat` |
+| Linux | 终端执行 `./start.sh`（首次需 `chmod +x start.sh`） |
+
+命令行（任意系统）：
 
 ```bash
 pip install -r requirements.txt
