@@ -104,7 +104,7 @@ def test_death_fall_phase():
     check("眼高已落到地面附近",
           close(g.cam.z, C.DEATH_EYE_H - C.EYE_HEIGHT, 0.02),
           f"z={g.cam.z:.3f}")
-    check("倒地时视线被压低", g.cam.eff_pitch_px < 0.0,
+    check("倒地时视线朝天（往后倒）", g.cam.eff_pitch_px > 0.0,
           f"pitch={g.cam.eff_pitch_px:.1f}")
 
 

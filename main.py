@@ -508,9 +508,10 @@ class Game:
         cam.yaw %= math.tau
 
     def _dead_camera(self, dt: float, s):
-        """阵亡后的镜头：先原地倒地，停留 DEATH_CAM_HOLD 秒再切到队友第一视角。
+        """阵亡后的镜头：先向后倒，停留 DEATH_CAM_HOLD 秒再切到队友第一视角。
 
-        * 倒地：位置不动，眼高平滑落到地面、视线压低。
+        * 倒地：位置不动，眼高平滑落到地面、视线逐渐仰起——最后对着天空
+          （pitch_px 为正 = 视线上抬，见 look() 里的注释）。
         * 观战：完全贴合队友，位置 / 朝向 / 俯仰全跟随，并且 eff_* 一起写——
           渲染读的是 eff_yaw / eff_pitch_px，只写基准值是不生效的。
         * 全程鼠标不参与（look() 已拦掉），所以不会再一动鼠标画面就甩。
@@ -523,7 +524,7 @@ class Game:
             k = _smoothstep(self.death_t / C.DEATH_FALL_TIME)
             scale = self.renderer.h / 720.0
             cam.z = (C.DEATH_EYE_H - C.EYE_HEIGHT) * k
-            cam.pitch_px = -C.DEATH_PITCH_PX * scale * k
+            cam.pitch_px = C.DEATH_SKY_PITCH_PX * scale * k
             cam.eff_yaw = cam.yaw
             cam.eff_pitch_px = cam.pitch_px
             return
@@ -867,7 +868,7 @@ class Game:
                     and self.player.can_fire()):
                 self.fire()
         else:
-            # 阵亡：先原地倒地，到时间后由 _dead_camera 切到队友第一视角；
+            # 阵亡：先向后倒（视线最后朝天），到时间后由 _dead_camera 切到队友第一视角；
             # 重生计时到后由 m.update 内的 _respawn 拉起。
             # 这里刻意不调 apply_to_camera —— 那是玩家自己的后坐力，
             # 不该加到被观战队友的第一视角上。
@@ -937,7 +938,7 @@ class Game:
         if m.player_dead != was_dead:
             self._reset_death_cam()
 
-        # 阵亡后先原地倒地，到时间再切到还活着的队友第一视角
+        # 阵亡后先向后倒（视线最后朝天），到时间再切到还活着的队友第一视角
         if m.player_dead:
             s = m.spectate_target()
             self._dead_camera(dt, s)
