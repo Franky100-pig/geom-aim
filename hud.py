@@ -525,19 +525,41 @@ def _draw_score_end(surf, renderer, game):
     text(surf, f"{m.team_kills[0]} : {m.team_kills[1]}", 30, (w * 0.5, h * 0.37),
          C.C_TEXT, anchor="cm")
 
-    st = m.stats
-    acc = (100.0 * st["hits"] / st["shots"]) if st["shots"] else 0.0
-    lines = [
-        f"击杀 {st['kills']}      阵亡 {st['deaths']}",
-        f"命中率 {acc:.1f}%      爆头 {st['headshots']}",
-        f"难度 {game.difficulty}   先到 {C.SCORE_KILL_TARGET} 杀",
-    ]
+    # 联机客户端：match.stats 是主机的战绩，这里必须用自己 agent 的数据
+    me = None
+    if getattr(game, "net_mode", "none") == "client":
+        uid = getattr(game, "client_uid", None)
+        for a in m.agents:
+            if getattr(a, "uid", None) == uid:
+                me = a
+                break
+
+    if me is not None:
+        acc = (100.0 * me.hits / me.shots) if me.shots else 0.0
+        lines = [
+            f"击杀 {me.kills}      阵亡 {me.deaths}",
+            f"命中率 {acc:.1f}%",
+            f"先到 {C.SCORE_KILL_TARGET} 杀",
+        ]
+    else:
+        st = m.stats
+        acc = (100.0 * st["hits"] / st["shots"]) if st["shots"] else 0.0
+        lines = [
+            f"击杀 {st['kills']}      阵亡 {st['deaths']}",
+            f"命中率 {acc:.1f}%      爆头 {st['headshots']}",
+            f"难度 {game.difficulty}   先到 {C.SCORE_KILL_TARGET} 杀",
+        ]
     y = h * 0.48
     for ln in lines:
         text(surf, ln, 20, (w * 0.5, y), C.C_TEXT, anchor="cm")
         y += 32
-    text(surf, "R 再来一局      ESC 菜单", 18, (w * 0.5, h * 0.72),
-         C.C_ACCENT, anchor="cm")
+    # 联机主机不能 R 重开（会重建比赛导致房间错乱），提示改为收房
+    if getattr(game, "net_mode", "none") == "host":
+        text(surf, "H 返回标题（收房）", 18, (w * 0.5, h * 0.72),
+             C.C_ACCENT, anchor="cm")
+    else:
+        text(surf, "R 再来一局      ESC 菜单", 18, (w * 0.5, h * 0.72),
+             C.C_ACCENT, anchor="cm")
 
 
 # ---------------------------------------------------------------- 标题界面

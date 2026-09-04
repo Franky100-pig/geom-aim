@@ -170,7 +170,15 @@ class Match:
         return u
 
     def add_human_agent(self, team: int, name: str) -> "Agent":
-        """加入一个联网真人（默认放我方队伍，与 AI 队友混编）。返回新建的 Agent。"""
+        """加入一个联网真人。优先顶替本队一个 AI 保持 5v5 平衡；
+        本队没有 AI 可顶替时才追加（理论上不会发生：队 0 常驻 4 个 AI）。"""
+        # 队伍平衡：顶掉本队一个 AI。alive=False 先标死，防止其他 AI 的
+        # target 还指着这个被移除的对象追空气。
+        for i, x in enumerate(self.agents):
+            if x.team == team and x.controller == "ai":
+                x.alive = False
+                del self.agents[i]
+                break
         base = self.spawns[team]
         ox = self.rng.uniform(-2.0, 2.0)
         oy = self.rng.uniform(-2.0, 2.0)
@@ -255,6 +263,7 @@ class Match:
 
     def fire_human(self, a: "Agent"):
         """真人开火：从 Agent 当前位置/朝向做命中判定（几何与玩家 _do_shot 一致）。"""
+        a.shots += 1
         eye_z = a.h * 0.5 + a.z
         dx, dy = math.cos(a.yaw), math.sin(a.yaw)
         pux, puy = -math.sin(a.yaw), math.cos(a.yaw)
@@ -286,6 +295,7 @@ class Match:
                     and abs(lateral) <= C.HEAD_HALF_W * scale)
             best, best_d, headshot = t, depth, head
         if best is not None:
+            a.hits += 1
             self.apply_damage(a, best, headshot)
         a.muzzle = 0.12
         a.fire_cd = a.weapon.fire_interval if a.weapon else 0.12
@@ -659,6 +669,7 @@ class Match:
                     self.player_respawn = C.SCORE_RESPAWN_DELAY
                     tgt.respawn_timer = C.SCORE_RESPAWN_DELAY
                     self.team_kills[thrower_team] += 1
+                tgt.deaths += 1
                 self.feed_add("你被烟雾弹炸到", C.C_ENEMY_HUD)
             return
         tgt.hp -= dmg
@@ -666,6 +677,7 @@ class Match:
         if tgt.hp <= 0:
             tgt.alive = False
             tgt.target = None
+            tgt.deaths += 1
             if self.mode == "score":
                 self.team_kills[thrower_team] += 1
                 tgt.respawn_timer = C.SCORE_RESPAWN_DELAY
@@ -690,6 +702,7 @@ class Match:
             tgt.alive = False
             self.stats["deaths"] += 1
             self.player_dead = True
+            tgt.deaths += 1
             if self.mode == "score":
                 self.player_respawn = C.SCORE_RESPAWN_DELAY
                 tgt.respawn_timer = C.SCORE_RESPAWN_DELAY
@@ -705,6 +718,7 @@ class Match:
 
         tgt.alive = False
         tgt.target = None
+        tgt.deaths += 1
         if self.mode == "score":
             if shooter is not None:
                 self.team_kills[shooter.team] += 1
@@ -712,6 +726,8 @@ class Match:
             tgt.respawn_timer = C.SCORE_RESPAWN_DELAY
 
         killer_is_player = shooter is not None and shooter.is_player
+        if shooter is not None:
+            shooter.kills += 1
         if killer_is_player:
             self.stats["kills"] += 1
             if self.mode != "score":
@@ -786,6 +802,8 @@ class Match:
                 invuln=round(a.invuln, 2),
                 weapon=(a.weapon.name if a.weapon else "rifle"),
                 controller=a.controller, is_local=a.is_player, name=a.name,
+                kills=a.kills, deaths=a.deaths, shots=a.shots, hits=a.hits,
+                smoke_charges=a.smoke_charges,
             ))
         return dict(
             mode=self.mode,
@@ -822,6 +840,11 @@ class Match:
             a.controller, a.is_player = ad["controller"], ad["is_local"]
             a.name = ad["name"]
             a.weapon = MATCH_WEAPONS.get(ad["weapon"], match_weapon("rifle"))
+            a.kills = ad.get("kills", 0)
+            a.deaths = ad.get("deaths", 0)
+            a.shots = ad.get("shots", 0)
+            a.hits = ad.get("hits", 0)
+            a.smoke_charges = ad.get("smoke_charges", 0)
         # 掉线的真人其 Agent 不再出现在快照里 → 截掉，避免残影
         if len(self.agents) > len(ags_in):
             self.agents = self.agents[:len(ags_in)]
@@ -836,6 +859,9 @@ class Match:
         self.player_dead = snap["player_dead"]
         self.player_respawn = snap["player_respawn"]
         self.state = snap["state"]
-        self.feed = [[t, tuple(c), ttl] for t, c, ttl in snap["feed"]]
+        # kill feed 是主机视角写的（"你被..."指主机玩家）；客户端收到时
+        # 把「你」改写成「主机」，不然读起来像自己死了。
+        self.feed = [[t.replace("你", "主机"), tuple(c), ttl]
+                     for t, c, ttl in snap["feed"]]
         self.stats = dict(snap["stats"])
         self.smokes.apply_snapshot(snap["smokes"])

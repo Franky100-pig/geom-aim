@@ -168,6 +168,7 @@ class Client:
         self.snap = None
         self.seq = 0
         self.connected = False
+        self.last_recv = time.time()   # 最后收到主机任意包的时刻（断线检测用）
         # fid -> {"total": int, "have": set, "parts": dict}
         self._frags = {}
         self._last_fid = None
@@ -205,6 +206,7 @@ class Client:
                 continue
             if msg.get("t") == "welcome":
                 self.connected = True
+                self.last_recv = time.time()
                 return msg
             if msg.get("t") == "full":
                 return None
@@ -228,6 +230,7 @@ class Client:
                 msg = json.loads(data.decode("utf-8"))
             except Exception:
                 continue
+            self.last_recv = time.time()   # 收到任意有效包都算主机存活
             t = msg.get("t")
             if t == "snap":
                 self.snap = msg["s"]

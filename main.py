@@ -15,6 +15,7 @@ import os
 import random
 import socket
 import sys
+import time
 
 os.environ.setdefault("PYGAME_HIDE_SUPPORT_PROMPT", "1")
 
@@ -197,7 +198,8 @@ class Game:
                                 C.SCORE_MAP_ROOM_W, C.SCORE_MAP_ROOM_H,
                                 rng=arena_rng, cover=True)
         self.smokes.clear()
-        self.smoke_left = 0           # 积分赛不配烟雾弹（保持纯枪战）
+        self.smoke_left = C.SMOKE_AI_SCORE_CHARGES   # 积分赛：与 AI/客户端真人一致，开局 1 颗
+        self.smoke_cd = 0.0
         self.smoke_cd = 0.0
         self.match = Match(self.gmap, random.Random(), self.difficulty, self.smokes, mode="score")
         self.player.ads = False
@@ -285,6 +287,12 @@ class Game:
         c = self.client
         if c is None:
             return
+        # 断线检测：超过 NET_TIMEOUT 没收到主机的任何包就回标题，
+        # 否则主机退出/崩溃后客户端永远停在最后一帧画面上。
+        if time.time() - c.last_recv > C.NET_TIMEOUT:
+            self.to_title()
+            self.connect_error = "与主机断开连接（超时）"
+            return
         keys = pygame.key.get_pressed()
         mbt = pygame.mouse.get_pressed()
         mvx = (1 if keys[pygame.K_w] else 0) - (1 if keys[pygame.K_s] else 0)
@@ -318,6 +326,9 @@ class Game:
             self.match.player_agent = me
             self.match.player_dead = not me.alive
             self.match.player_hp = me.hp
+            # 烟雾槽 UI 与真实弹药数同步（服务端权威）
+            self.smoke_left = me.smoke_charges
+            self.smoke_cd = me.smoke_cd
         if self.match.player_dead != was_dead:
             self._reset_death_cam()
 
@@ -330,8 +341,12 @@ class Game:
             self.cam.apply_recoil(0.0, 0.0)
             self.player.crouch = la.crouch
             self.player.weapon = la.weapon
-            self.player.ads = False
+            # ads 是本地视觉状态（右键切换），这里只负责缩放过渡；
+            # 阵亡才强制收镜。
+            self.renderer.lerp_zoom(self.player.weapon.zoom
+                                    if self.player.ads else 1.0, dt)
         else:
+            self.player.ads = False
             s = m.spectate_target()
             self._dead_camera(dt, s)
             m.spectate = s if self.death_t >= C.DEATH_CAM_HOLD else None
@@ -403,7 +418,9 @@ class Game:
             if self.net_mode == "host":
                 self.host.poll()
                 self.lobby_names = self.host.names()
-                if self.state == "play":
+                # 权威服务器不能暂停：主机开 ESC 菜单时模拟与广播必须继续，
+                # 否则所有客户端画面冻结。单机才能靠菜单暂停。
+                if self.state in ("play", "menu"):
                     self._update_host(dt)
             elif self.net_mode == "client":
                 self._update_client(dt)
@@ -446,6 +463,9 @@ class Game:
                     self.player.ads = False
                     self.renderer.set_zoom(1.0)
                     self._grab(False)
+                elif self.state == "client":
+                    # 客户端没有菜单态：只放开鼠标，点回窗口时再抓（MOUSEBUTTONDOWN）
+                    self._grab(False)
 
             elif ev.type == pygame.MOUSEMOTION:
                 # 单机（none）和主机（host）都走本地 look()：主机跑权威模拟，
@@ -463,6 +483,13 @@ class Game:
                     self.cam.pitch_px = max(-limit, min(limit, self.cam.pitch_px))
 
             elif ev.type == pygame.MOUSEBUTTONDOWN:
+                if self.state == "client":
+                    # 客户端：右键本地开镜（纯视觉），左键点回窗口时重新抓鼠标
+                    if ev.button == 3:
+                        self.player.ads = not self.player.ads
+                    elif ev.button == 1:
+                        self._grab(True)
+                    continue
                 if self.state != "play":
                     continue
                 if ev.button == 1:
@@ -678,8 +705,10 @@ class Game:
 
         if key == pygame.K_r:
             if self.match is not None:
-                # 打完了就再来一局；回合进行中 R 不生效，免得误触重开
-                if self.match.match_over:
+                # 打完了就再来一局；回合进行中 R 不生效，免得误触重开。
+                # 联机主机不能 R：重开会新建 Match+新地图种子，Host 还持旧
+                # 引用，客户端会卡在旧比赛/错地图上。联机打完按 H 收房。
+                if self.match.match_over and self.net_mode != "host":
                     if self.match.mode == "score":
                         self.start_score()
                     else:
@@ -886,6 +915,8 @@ class Game:
             self._reset_death_cam()
             if not m.player_dead:
                 self._snap_to_spawn()      # 刚复活：镜头摆回我方出生点
+                # 积分赛重生补 1 颗烟，与 AI/客户端真人（_respawn 发弹）一致
+                self.smoke_left = max(self.smoke_left, C.SMOKE_AI_SCORE_CHARGES)
 
         if self.smoke_cd > 0.0:
             self.smoke_cd = max(0.0, self.smoke_cd - dt)
@@ -1182,6 +1213,10 @@ class Game:
             hud.draw_menu(surf, r, self)
         elif self.state == "title":
             hud.draw_title(surf, r, self)
+            if self.connect_error:
+                # 断线 / 连接失败等提示：回到标题后仍然可见，直到下次连接
+                hud.text(surf, self.connect_error, 18,
+                         (r.w * 0.5, r.h * 0.86), C.C_ENEMY_HUD, anchor="cm")
         if self.state in ("menu", "title"):
             hud.text(surf, f"{self.fps_smooth:.0f} FPS", 14,
                      (r.w - 24, r.h - 26), C.C_DIM, anchor="br")

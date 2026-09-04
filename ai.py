@@ -125,6 +125,11 @@ class Agent:
         self.remote_id = None     # 联网时分配的客户端编号
         self.uid = 0             # 场内唯一编号（联机快照用它定位每个客户端自己的 Agent）
         self.name = "BOT"
+        # 个人战绩（整场累积，随快照同步给客户端，用于结算面板）
+        self.kills = 0
+        self.deaths = 0
+        self.shots = 0
+        self.hits = 0
 
     @property
     def dead(self) -> bool:
