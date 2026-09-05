@@ -4,7 +4,7 @@
 标题界面： 1 练习模式    2 对战 3v3    3 积分赛 5v5    4 创建房间    5 加入房间    [ ] 调 AI 难度
 练习：     WASD 移动 / 鼠标 转视角 / 左键 开火 / 右键 轻点开关镜（SNIPER）/ 1-5 换模式
 对战：     买枪阶段 1-5 买枪 / 左键 开火 / 右键 开镜 / ESC 菜单 / H 返回主菜单
-积分赛：   5v5 连续重生 TDM，1-5 自由换枪，先到 25 杀获胜 / Ctrl 蹲 / H 返回主菜单
+积分赛：   5v5 连续重生 TDM，1-5 自由换枪，先到 25 杀获胜 / E 蹲 / H 返回主菜单
 局域网：   4 建房（人类 vs AI，最多 3 人），5 输入主机 IP 或 xxx.local 加入
 """
 
@@ -337,7 +337,7 @@ class Game:
         if not m.player_dead:
             self.cam.x, self.cam.y = la.x, la.y
             self.cam.yaw = la.yaw                       # yaw 取服务器权威值
-            self.cam.z = la.z - (C.CROUCH_EYE_DROP if la.crouch else 0.0)
+            self.cam.z = la.z + la.ground_z - (C.CROUCH_EYE_DROP if la.crouch else 0.0)
             self.cam.apply_recoil(0.0, 0.0)
             self.player.crouch = la.crouch
             self.player.weapon = la.weapon
@@ -657,28 +657,37 @@ class Game:
             if key == pygame.K_6:
                 return  # 积分赛不配烟雾弹
 
-        # ---------- 对战：买枪阶段 1-5 买枪，6 买烟雾弹 ----------
-        if self.match is not None and self.match.state == "prep":
+        # ---------- 对战：1-5 切已拥有的枪；买枪阶段还能买新的 ----------
+        if self.match is not None and self.match.mode == "match":
             if pygame.K_1 <= key <= pygame.K_5:
                 idx = key - pygame.K_1
                 if idx < len(BUY_ORDER):
                     w = BUY_ORDER[idx]
-                    ok = self.match.player_buy(w)
-                    if ok:
+                    if self.match.player_select(w):
+                        # 库存里已有 → 直接切（买枪阶段和交火中都行）
                         self.player.weapon = self.match.player_agent.weapon
                         self.player.bolt = 0.0
+                        self.audio.play("spawn")
+                    elif self.match.state == "prep":
+                        if self.match.player_buy(w):
+                            self.player.weapon = self.match.player_agent.weapon
+                            self.player.bolt = 0.0
+                            self.audio.play("spawn")
+                        else:
+                            self.fx.popup(self.renderer.w * 0.5, self.renderer.h * 0.60,
+                                          "钱不够", C.C_WARN)
+                    else:
+                        self.fx.popup(self.renderer.w * 0.5, self.renderer.h * 0.60,
+                                      "还没买这把枪", C.C_WARN)
+                return
+            if key == pygame.K_6:
+                if self.match.state == "prep":
+                    if self.match.player_buy_smoke():
+                        self.smoke_left += 1
                         self.audio.play("spawn")
                     else:
                         self.fx.popup(self.renderer.w * 0.5, self.renderer.h * 0.60,
                                       "钱不够", C.C_WARN)
-                return
-            if key == pygame.K_6:
-                if self.match.player_buy_smoke():
-                    self.smoke_left += 1
-                    self.audio.play("spawn")
-                else:
-                    self.fx.popup(self.renderer.w * 0.5, self.renderer.h * 0.60,
-                                  "钱不够", C.C_WARN)
                 return
 
         if key == pygame.K_ESCAPE:
@@ -825,7 +834,8 @@ class Game:
         keys = pygame.key.get_pressed()
         self.player.update_move(dt, self.cam, self.gmap, keys)
         self.player.update_jump(dt)
-        self.cam.z = self.player.z - (C.CROUCH_EYE_DROP if self.player.crouch else 0.0)
+        self.cam.z = (self.player.z + self.player.ground_z
+                       - (C.CROUCH_EYE_DROP if self.player.crouch else 0.0))
         self.player.update_weapon(dt, self.renderer.h)
         self.player.apply_to_camera(self.cam, self.renderer)
 
@@ -884,7 +894,8 @@ class Game:
         if not m.player_dead:
             self.player.update_move(dt, self.cam, self.gmap, keys)
             self.player.update_jump(dt)
-            self.cam.z = self.player.z - (C.CROUCH_EYE_DROP if self.player.crouch else 0.0)
+            self.cam.z = (self.player.z + self.player.ground_z
+                          - (C.CROUCH_EYE_DROP if self.player.crouch else 0.0))
             self.player.update_weapon(dt, self.renderer.h)
             self.player.apply_to_camera(self.cam, self.renderer)
             self.renderer.lerp_zoom(self.player.weapon.zoom if self.player.ads else 1.0, dt)
@@ -940,7 +951,8 @@ class Game:
             self.player.update_move(dt, self.cam, self.gmap, keys)
         self.player.update_jump(dt)
         # 阵亡观战队友时镜头贴队友的眼睛，不带玩家自己的跳跃高度
-        self.cam.z = (self.player.z if not m.player_dead else 0.0) - (
+        self.cam.z = ((self.player.z if not m.player_dead else 0.0)
+                      + (self.player.ground_z if not m.player_dead else 0.0)) - (
             C.CROUCH_EYE_DROP if (not m.player_dead and self.player.crouch) else 0.0)
         self.player.update_weapon(dt, self.renderer.h)
         self.player.apply_to_camera(self.cam, self.renderer)
@@ -1059,8 +1071,9 @@ class Game:
                                     dx + pux * lat, dy + puy * lat, eye_z, slope)
             if depth >= wall_d:
                 continue
-            # 矮箱后蹲下的目标看不见；满高掩体照旧挡视线
-            if not self.gmap.clear_line_h(cam.x, cam.y, eye_z, t.x, t.y, t.h):
+            # 矮箱后蹲下的目标看不见；满高掩体照旧挡视线；地形山脊也挡（洼地能藏）
+            if not self.gmap.clear_line_h(cam.x, cam.y, eye_z, t.x, t.y, t.h,
+                                         g1=getattr(t, "ground_z", 0.0)):
                 continue
             scale = t.w / C.BOT_W
             head = (C.HEAD_BOT * t.h <= h_aim <= C.HEAD_TOP * t.h
@@ -1171,8 +1184,15 @@ class Game:
             elif not g.resting:
                 items.append((g.x, g.y, ("body", g)))
 
+        eye_z = C.EYE_HEIGHT + cam.z
         for _x, _y, (kind, obj) in sorted(
                 items, key=lambda it: -((it[0] - cam.x) ** 2 + (it[1] - cam.y) ** 2)):
+            # 地形遮挡：人/靶在山坡背面时被地块挡住，不画（与 AI 视线同套高度场）
+            if kind in ("agent", "target"):
+                gz = getattr(obj, "ground_z", 0.0)
+                if self.gmap.terrain_occludes(cam.x, cam.y, eye_z,
+                                              obj.x, obj.y, gz + obj.h * 0.6):
+                    continue
             if kind == "smoke":
                 self.smokes.draw_cloud(surf, r, cam, obj)
             elif kind == "body":
@@ -1284,7 +1304,7 @@ def main():
     print("  标题界面：  1 练习模式    2 对战 3v3    3 积分赛 5v5    [ ] 调 AI 难度")
     print("  练习：      WASD 移动  鼠标 转视角  左键 开火  右键 开关镜  1-5 换模式")
     print("  对战：      买枪阶段 1-5 买枪  左键 开火  右键 开镜  R（结束后）再来一局")
-    print("  积分赛：    5v5 连续重生 TDM，1-5 自由换枪，先到 25 杀获胜，Ctrl 蹲")
+    print("  积分赛：    5v5 连续重生 TDM，1-5 自由换枪，先到 25 杀获胜，E 蹲")
     print("  通用：      ESC 菜单（灵敏度 / FOV / 准星 / 音效）  H 返回主菜单  M 静音  F 全屏")
     Game().run()
 

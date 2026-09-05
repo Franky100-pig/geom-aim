@@ -238,7 +238,7 @@ class FakeKeys(dict):
 
 
 def test_crouch():
-    """Ctrl 蹲下：收紧扩散、缩小命中轮廓。"""
+    """E 键蹲下：收紧扩散、缩小命中轮廓（Ctrl 已不再触发蹲）。"""
     pygame.init()
     p = Player()
     p.weapon = match_weapon("rifle")
@@ -249,20 +249,21 @@ def test_crouch():
     check("默认站立", p.crouch is False)
     stand_spread = p.spread
 
-    keys[pygame.K_LCTRL] = True
+    keys[pygame.K_e] = True
     p.update_move(0.016, cam, GS, keys)
-    check("按住 Ctrl → 蹲下", p.crouch is True)
+    check("按住 E → 蹲下", p.crouch is True)
     check("蹲下后扩散更小", p.spread < stand_spread,
           f"{stand_spread:.5f} -> {p.spread:.5f}")
 
-    keys[pygame.K_LCTRL] = False
+    keys[pygame.K_e] = False
+    p.update_move(0.016, cam, GS, keys)
+    check("松开 E → 站起", p.crouch is False)
+
+    # Ctrl 不再蹲（已改为 E），避免误触
+    keys[pygame.K_LCTRL] = True
     keys[pygame.K_RCTRL] = True
     p.update_move(0.016, cam, GS, keys)
-    check("右 Ctrl 也能蹲", p.crouch is True)
-
-    keys[pygame.K_RCTRL] = False
-    p.update_move(0.016, cam, GS, keys)
-    check("松开 Ctrl → 站起", p.crouch is False)
+    check("按 Ctrl 不再蹲下", p.crouch is False)
 
     check("蹲下命中轮廓更小", C.BOT_H * C.CROUCH_H_MUL < C.BOT_H)
 

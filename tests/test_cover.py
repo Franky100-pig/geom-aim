@@ -150,6 +150,7 @@ def test_ai_cannot_see_crouched_behind_box():
     class _A:
         def __init__(self, x, y, h):
             self.x, self.y, self.h, self.alive, self.team = x, y, h, True, 1
+            self.ground_z = 0.0            # 地形：假 Agent 站在平地上
 
     m = type("M", (), {"gmap": gm, "smokes": smokes})()
 

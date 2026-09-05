@@ -104,6 +104,17 @@ class Agent:
         self.muzzle = 0.0          # 枪口火光计时
         self.stuck = 0             # 连续卡墙计数（用于兜底绕行）
 
+        # 武器库存（对战回合制）：买过的枪会留着，回合之间不清空，
+        # 所以"买了两把"之后能来回切。开局人手一把手枪。
+        # loadout 存武器 key（见 weapons.MATCH_WEAPONS），w_idx 指向当前那把。
+        self.loadout: list[str] = ["pistol"]
+        self.w_idx = 0
+
+        # 战术：偷背身。flank_goal 非空 = 正在绕后；flank_cd 是两次包抄的冷却。
+        self.flank_goal = None     # (x, y) 打算绕到的落点
+        self.flank_t = 0.0         # 本次包抄已用时（超时就放弃）
+        self.flank_cd = 0.0        # 距下次可以起意包抄还剩多久
+
         # 投掷物：AI 自己的烟雾弹携带量与冷却（玩家那套在 Game 上，这里只管 AI）
         self.smoke_charges = 0     # 本回合手里还有几颗
         self.smoke_cd = 0.0        # 投掷冷却（秒）
@@ -116,6 +127,9 @@ class Agent:
         self.respawn_timer = 0.0
         self.invuln = 0.0
         self.crouch = False
+
+        # 地形：脚下地面高度（高度图采样）。每帧在 update_agent 里刷新。
+        self.ground_z = 0.0
 
         # 联机：控制来源。"ai"=本地 AI 驱动；"local"=主机真人；"human"=联网真人。
         # 只有 "ai" 才走 update_agent，其余由各自的输入驱动。
@@ -144,9 +158,11 @@ def _visible(m, a, e) -> bool:
     d = math.hypot(e.x - a.x, e.y - a.y)
     if d > C.AI_VIEW_RANGE or d < 1e-3:
         return False
-    # 高度感知视线：蹲在矮箱后（头顶 < 箱高）的目标看不见，站着露头才看得见
+    # 高度感知视线：蹲在矮箱后（头顶 < 箱高）的目标看不见，站着露头才看得见。
+    # 地形：眼睛与目标都按"脚下地面高度"抬到绝对高度，山脊会挡、洼地能藏。
     eye_z = a.h * 0.5
-    if not m.gmap.clear_line_h(a.x, a.y, eye_z, e.x, e.y, e.h):
+    if not m.gmap.clear_line_h(a.x, a.y, eye_z, e.x, e.y, e.h,
+                               g0=a.ground_z, g1=e.ground_z):
         return False
     # 烟是双向封视线的：隔着烟看不见，自己站烟里也看不见外面
     return not m.smokes.blocks(a.x, a.y, e.x, e.y)
@@ -335,6 +351,50 @@ def ai_maybe_throw_smoke(m, a, rng: random.Random, dt: float = 0.0):
     a.smoke_intent = rng.uniform(C.SMOKE_AI_DELAY_MIN, C.SMOKE_AI_DELAY_MAX)
 
 
+# ---------------------------------------------------------------- 战术：偷背身
+
+def back_exposed(tgt, from_x: float, from_y: float) -> bool:
+    """目标是不是把背露给了 (from_x, from_y) 这个位置。
+
+    判据是「目标朝向」与「目标 → 观察者」这两个向量的夹角余弦：
+    接近 +1 表示目标正对着你（正面刚枪），接近 -1 表示背对着你（可以偷）。
+    """
+    dx, dy = from_x - tgt.x, from_y - tgt.y
+    d = math.hypot(dx, dy)
+    if d < 1e-6:
+        return False
+    dot = (math.cos(tgt.yaw) * dx + math.sin(tgt.yaw) * dy) / d
+    return dot < C.AI_FLANK_BACK_DOT
+
+
+def flank_point(gmap, tgt, rng: random.Random, radius: float | None = None):
+    """在目标"身后"找一个能站的包抄落点；身后全是墙就返回 None（放弃包抄）。
+
+    落点 = 目标位置 + 目标朝向的反方向 × radius，左右各试几个偏角，
+    挑第一个既不在墙里、身体又站得下的点。
+    """
+    radius = C.AI_FLANK_RADIUS if radius is None else radius
+    back = tgt.yaw + math.pi
+    side = 1 if rng.random() < 0.5 else -1
+    for offset in (0.0, side * 0.6, -side * 0.6, side * 1.1, -side * 1.1):
+        ang = back + offset
+        x = tgt.x + math.cos(ang) * radius
+        y = tgt.y + math.sin(ang) * radius
+        if gmap.blocked(x, y, 0.35):
+            continue
+        return (x, y)
+    return None
+
+
+def _flank_rate(tune: dict, exposed: bool) -> float:
+    """每秒起意包抄的"速率"（配合 dt 用）。难度越高越爱绕，目标背身时更想绕。"""
+    skill = clamp(tune.get("burst", 0.5), 0.0, 1.0)
+    rate = lerp(C.AI_FLANK_CHANCE_MIN, C.AI_FLANK_CHANCE_MAX, skill)
+    if exposed:
+        rate *= C.AI_FLANK_BACK_BONUS
+    return min(rate, 3.0)
+
+
 # ---------------------------------------------------------------- 开火
 
 def _try_fire(m, a, dt: float, rng: random.Random, tune: dict):
@@ -346,10 +406,11 @@ def _try_fire(m, a, dt: float, rng: random.Random, tune: dict):
         return
 
     dist = math.hypot(tgt.x - a.x, tgt.y - a.y)
-    eye_z = a.h * 0.5
-    chest = tgt.h * 0.62                       # 瞄胸口，和命中判定一致
+    eye_z = a.ground_z + a.h * 0.5
+    chest = tgt.ground_z + tgt.h * 0.62         # 瞄胸口，和命中判定一致
     slope = (chest - eye_z) / max(dist, 1e-3)
-    if not m.gmap.clear_line_h(a.x, a.y, eye_z, tgt.x, tgt.y, tgt.h):
+    if not m.gmap.clear_line_h(a.x, a.y, eye_z, tgt.x, tgt.y, tgt.h,
+                               g0=a.ground_z, g1=tgt.ground_z):
         return
     # 烟挡视线：目标躲进烟里（或自己站在烟里）就别开枪了
     if m.smokes.blocks(a.x, a.y, tgt.x, tgt.y):
@@ -416,6 +477,9 @@ def update_agent(m, a, dt: float, rng: random.Random, tune: dict):
     if a.smoke_cd > 0:
         a.smoke_cd = max(0.0, a.smoke_cd - dt)
 
+    # 脚下地形高度（高度图采样）；平整地图 h_at 恒返回 0，无副作用。
+    a.ground_z = m.gmap.h_at(a.x, a.y)
+
     # 1) 目标选择
     tgt = pick_target(m, a)
     if tgt is not a.target:
@@ -442,9 +506,41 @@ def update_agent(m, a, dt: float, rng: random.Random, tune: dict):
         if a.react <= 0:
             _try_fire(m, a, dt, rng, tune)
 
-        # 远距离压上去，中距离横移躲枪
+        # —— 战术：偷背身（背身偷袭 / 绕后包抄）——
+        a.flank_cd = max(0.0, a.flank_cd - dt)
+        exposed = back_exposed(tgt, a.x, a.y)
+
+        # 1) 已经在包抄路上：到了、超时、血少了、贴脸了就收手回正面对枪
+        if a.flank_goal is not None:
+            a.flank_t += dt
+            reached = math.hypot(a.flank_goal[0] - a.x, a.flank_goal[1] - a.y) < 1.0
+            if (a.flank_t > C.AI_FLANK_MAX_T or a.hp <= C.AI_FLANK_HP_MIN
+                    or dist < C.AI_FLANK_MIN_DIST or reached):
+                a.flank_goal = None
+                a.flank_t = 0.0
+                a.flank_cd = C.AI_FLANK_CD
+        # 2) 否则按速率掷骰决定要不要绕后
+        elif (C.AI_FLANK_ENABLED and a.flank_cd <= 0.0
+              and C.AI_FLANK_MIN_DIST < dist < C.AI_FLANK_MAX_DIST
+              and a.hp > C.AI_FLANK_HP_MIN
+              and rng.random() < _flank_rate(tune, exposed) * dt):
+            pt = flank_point(m.gmap, tgt, rng)
+            if pt is not None:
+                a.flank_goal = pt
+                a.flank_t = 0.0
+                a.path = []
+                a.goal_cell = None
+
         speed = C.AI_MOVE_SPEED * tune["move_mul"]
-        if dist > 13.0:
+        if a.flank_goal is not None:
+            # 绕后中：沿路径走向包抄点，但身体保持朝目标（路上照样能开枪）
+            _repath(m, a, a.flank_goal[0], a.flank_goal[1], rng)
+            _follow_path(m, a, dt, speed)
+        elif exposed and dist > C.AI_FLANK_MIN_DIST:
+            # 目标把背露给我：悄悄压上去偷，别原地横移把自己送进枪口
+            _repath(m, a, tgt.x, tgt.y, rng)
+            _follow_path(m, a, dt, speed * C.AI_FLANK_PUSH_MUL)
+        elif dist > 13.0:
             _repath(m, a, tgt.x, tgt.y, rng)
             _follow_path(m, a, dt, speed)
         else:
@@ -469,6 +565,8 @@ def update_agent(m, a, dt: float, rng: random.Random, tune: dict):
         a.state = "search"
         a.crouch = False
         a.h = C.BOT_H
+        a.flank_goal = None          # 目标没了就不绕了
+        a.flank_t = 0.0
         a.lost_timer += dt
         goal = None
         if a.last_seen and a.lost_timer < C.AI_LOSE_TARGET:

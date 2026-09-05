@@ -37,7 +37,7 @@ MODE_HINT = {
 class Target:
     __slots__ = ("x", "y", "home", "kind", "hp", "h", "w", "age", "life",
                  "flash", "axis", "reach", "speed", "phase", "state", "timer",
-                 "out", "sign", "waypoint", "scale")
+                 "out", "sign", "waypoint", "scale", "ground_z")
 
     def __init__(self, x: float, y: float, kind: str = "static"):
         self.x = x
@@ -60,6 +60,7 @@ class Target:
         self.sign = 1
         self.waypoint = (x, y)
         self.scale = 1.0
+        self.ground_z = 0.0    # 脚下地形高度（高度图采样），渲染时让靶子踩在坡上
 
     @property
     def tracking(self) -> bool:
@@ -116,6 +117,8 @@ class Range:
             t.age += dt
             if t.flash > 0:
                 t.flash = max(0.0, t.flash - dt)
+            # 脚下地形高度：靶子踩在坡上（平整地图 h_at 恒为 0）。
+            t.ground_z = self.gmap.h_at(t.x, t.y)
 
         if self.mode == "botz":
             self._update_botz(dt, cam)

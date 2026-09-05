@@ -245,7 +245,10 @@ class Match:
 
         w = inp.get("weapon")
         if w and str(w) in MATCH_WEAPONS:
-            a.weapon = MATCH_WEAPONS[str(w)]
+            key = str(w)
+            # 库存里已有 → 直接切；没有 → 只在买枪阶段才允许买（交火中不能凭空变枪）
+            if not self._select(a, key) and self.state == "prep":
+                self._buy(a, key)
 
         if bool(inp.get("fire", False)) and a.fire_cd <= 0.0:
             self.fire_human(a)
@@ -264,7 +267,7 @@ class Match:
     def fire_human(self, a: "Agent"):
         """真人开火：从 Agent 当前位置/朝向做命中判定（几何与玩家 _do_shot 一致）。"""
         a.shots += 1
-        eye_z = a.h * 0.5 + a.z
+        eye_z = a.ground_z + a.h * 0.5 + a.z
         dx, dy = math.cos(a.yaw), math.sin(a.yaw)
         pux, puy = -math.sin(a.yaw), math.cos(a.yaw)
         # 打对面队伍
@@ -279,14 +282,15 @@ class Match:
             lateral = rx * pux + ry * puy
             if abs(lateral) > t.w * 0.5:
                 continue
-            h_aim = t.h * 0.62
-            if h_aim < 0.0 or h_aim > t.h:
+            h_aim = t.ground_z + t.h * 0.62
+            if h_aim < 0.0 or h_aim > t.ground_z + t.h:
                 continue
             slope = (h_aim - eye_z) / depth
             wall_d = cast_ray_block(self.gmap, a.x, a.y, dx, dy, eye_z, slope)
             if depth >= wall_d:
                 continue
-            if not self.gmap.clear_line_h(a.x, a.y, eye_z, t.x, t.y, t.h):
+            if not self.gmap.clear_line_h(a.x, a.y, eye_z, t.x, t.y, t.h,
+                                         g0=0.0, g1=t.ground_z):
                 continue
             if self.smokes.blocks(a.x, a.y, t.x, t.y):
                 continue
@@ -486,10 +490,16 @@ class Match:
             self.state = "match_end"
 
     def player_swap(self, key: str) -> bool:
-        """积分赛里 1-5 自由换枪（无经济，不花一分钱）。"""
+        """积分赛里 1-5 自由换枪（无经济，不花一分钱）。
+
+        顺手把换到的枪记进库存，这样联机快照和 HUD 读到的状态是一致的。
+        """
         if key not in MATCH_WEAPONS:
             return False
-        self.player_agent.weapon = MATCH_WEAPONS[key]
+        a = self.player_agent
+        if key not in a.loadout:
+            a.loadout.append(key)
+        self._select(a, key)
         return True
 
     def update(self, dt: float):
@@ -594,8 +604,28 @@ class Match:
             else:
                 a.money = min(C.ECON_MAX, a.money + amount)
 
+    def _select(self, a, key: str) -> bool:
+        """切到库存里已有的某把枪。库存里没有就返回 False（不花钱、不改状态）。
+
+        切枪本身不受回合阶段限制 —— 买枪阶段和交火中都能切，否则会出现
+        "买了两把枪却切不回去"的尴尬。
+        """
+        if key not in a.loadout:
+            return False
+        a.weapon = MATCH_WEAPONS[key]
+        a.w_idx = a.loadout.index(key)
+        return True
+
+    def player_select(self, key: str) -> bool:
+        """玩家切换到已拥有的武器（1-5 键）。没买过返回 False。"""
+        return self._select(self.player_agent, key)
+
     def _buy(self, a, key: str, money: int | None = None):
+        """买枪：已经拥有就免费切过去（不重复扣钱），否则扣钱入库并装备。"""
         w = MATCH_WEAPONS[key]
+        if key in a.loadout:
+            self._select(a, key)
+            return True
         if money is None:
             money = a.money
         if money < w.price:
@@ -604,14 +634,23 @@ class Match:
             self.player_money -= w.price
         else:
             a.money -= w.price
+        a.loadout.append(key)
         a.weapon = w
+        a.w_idx = a.loadout.index(key)
         return True
 
     def _ai_buy(self, a):
-        """AI 买枪 + 买烟。队友和敌人都用同一套，所以两边都会扔烟。"""
-        if a.money >= MATCH_WEAPONS["rifle"].price:
+        """AI 买枪 + 买烟。队友和敌人都用同一套，所以两边都会扔烟。
+
+        已经有步枪就不再重复买（库存里留着就能一直用），省下的钱去买烟 ——
+        否则 AI 每回合都重新买一把步枪，经济永远攒不起来。
+        """
+        if "rifle" in a.loadout:
+            pass          # 主武器还在（回合之间不清空），这回合不用再买
+        elif a.money >= MATCH_WEAPONS["rifle"].price:
             self._buy(a, "rifle")
-        elif a.money >= MATCH_WEAPONS["smg"].price and self.rng.random() < 0.65:
+        elif ("smg" not in a.loadout and self.rng.random() < 0.65
+              and a.money >= MATCH_WEAPONS["smg"].price):
             self._buy(a, "smg")
         # 都买不起就保留开局的手枪（无需 rebuy）
 
@@ -800,7 +839,9 @@ class Match:
                 hp=round(a.hp, 1), alive=a.alive, crouch=a.crouch,
                 flash=round(a.flash, 2), muzzle=round(a.muzzle, 2),
                 invuln=round(a.invuln, 2),
-                weapon=(a.weapon.name if a.weapon else "rifle"),
+                # 用武器 key（不是中文名）同步，否则客户端还原时找不到对应武器
+                weapon=(a.weapon.key if a.weapon else "rifle"),
+                loadout=list(a.loadout), w_idx=a.w_idx,
                 controller=a.controller, is_local=a.is_player, name=a.name,
                 kills=a.kills, deaths=a.deaths, shots=a.shots, hits=a.hits,
                 smoke_charges=a.smoke_charges,
@@ -839,7 +880,13 @@ class Match:
             a.invuln = ad["invuln"]
             a.controller, a.is_player = ad["controller"], ad["is_local"]
             a.name = ad["name"]
-            a.weapon = MATCH_WEAPONS.get(ad["weapon"], match_weapon("rifle"))
+            # 主机发的是武器 key（如 "rifle"）；练习武器（pr_*）兜底成步枪
+            wkey = ad.get("weapon", "rifle")
+            a.weapon = MATCH_WEAPONS.get(wkey, match_weapon(wkey))
+            a.loadout = list(ad.get("loadout") or ["pistol"])
+            a.w_idx = int(ad.get("w_idx", 0) or 0)
+            if a.w_idx >= len(a.loadout):
+                a.w_idx = 0
             a.kills = ad.get("kills", 0)
             a.deaths = ad.get("deaths", 0)
             a.shots = ad.get("shots", 0)

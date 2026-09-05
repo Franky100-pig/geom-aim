@@ -70,15 +70,35 @@ def cell_height(v: int) -> float:
 class GridMap:
     """0 = 空地，1 = 普通墙，2 = 强调柱。"""
 
-    def __init__(self, grid):
+    def __init__(self, grid, hmap=None):
         self.g = grid
         self.h = len(grid)
         self.w = len(grid[0])
+        # 高度图：每个格中心的地面高度（世界单位，墙高 = 1.0）。
+        # None 表示完全平整 —— h_at 恒返回 0，所有地形相关逻辑自动退化为旧行为。
+        self.hmap = hmap
 
     def at(self, ix, iy):
         if 0 <= ix < self.w and 0 <= iy < self.h:
             return self.g[iy][ix]
         return 1
+
+    def h_at(self, x: float, y: float) -> float:
+        """世界坐标 (x, y) 处的地面高度，双线性插值。无高度图时恒为 0。"""
+        if self.hmap is None:
+            return 0.0
+        fx = clamp(x - 0.5, 0.0, self.w - 1.0001)
+        fy = clamp(y - 0.5, 0.0, self.h - 1.0001)
+        ix, iy = int(fx), int(fy)
+        tx, ty = fx - ix, fy - iy
+        h = self.hmap
+        v00 = h[iy][ix]
+        v10 = h[iy][ix + 1] if ix + 1 < self.w else h[iy][ix]
+        v01 = h[iy + 1][ix] if iy + 1 < self.h else h[iy][ix]
+        v11 = (h[iy + 1][ix + 1]
+               if (ix + 1 < self.w and iy + 1 < self.h) else h[iy][ix])
+        return ((v00 * (1 - tx) + v10 * tx) * (1 - ty)
+                + (v01 * (1 - tx) + v11 * tx) * ty)
 
     def blocked(self, fx: float, fy: float, r: float) -> bool:
         """圆 (fx, fy, r) 是否和任一墙格相交。"""
@@ -109,13 +129,39 @@ class GridMap:
             y += sy
         return True
 
-    def clear_line_h(self, x0, y0, z0, x1, y1, z1) -> bool:
+    def terrain_occludes(self, x0, y0, z0, x1, y1, z1) -> bool:
+        """纯地形遮挡（不管墙）：视线中途低于地面高度 → 被山坡挡住。
+
+        用于精灵（人/靶）的可见性判定，和 clear_line_h 的地形段共用同一套
+        高度场逻辑；墙的遮挡交给渲染器的 zbuf，这里不重复算。
+        """
+        if self.hmap is None:
+            return False
+        dx, dy = x1 - x0, y1 - y0
+        dist = math.hypot(dx, dy)
+        if dist < 1e-6:
+            return False
+        steps = int(dist * 6) + 1
+        for i in range(1, steps + 1):
+            t = i / steps
+            zh = z0 + (z1 - z0) * t
+            if zh < self.h_at(x0 + dx * t, y0 + dy * t) - 1e-6:
+                return True
+        return False
+
+    def clear_line_h(self, x0, y0, z0, x1, y1, z1, g0: float = 0.0,
+                     g1: float = 0.0) -> bool:
         """高度感知视线：从 (x0,y0,z0) 看向 (x1,y1,z1)。
 
         满高格子（墙/柱/高箱）一律挡住，和原来的 clear_line 一致；
         半高箱只在视线低于箱顶时才挡 —— 于是"蹲下藏得住、站着露头"。
-        z0 通常是射手眼高，z1 是目标头顶高度。
+        z0/z1 是"离地高度"，g0/g1 是两端的地面高度（地形）；两者相加才是
+        绝对高度。无地形（g0=g1=0 且 hmap=None）时与旧行为逐像素一致。
+
+        地形遮挡：视线中途低于该处地面高度 → 被山坡/山脊挡住，洼地能藏人。
         """
+        z0 += g0
+        z1 += g1
         dx, dy = x1 - x0, y1 - y0
         dist = math.hypot(dx, dy)
         if dist < 1e-6:
@@ -123,13 +169,17 @@ class GridMap:
         steps = int(dist * 6) + 1
         for i in range(1, steps + 1):
             t = i / steps
-            v = self.at(int(x0 + dx * t), int(y0 + dy * t))
+            px, py = x0 + dx * t, y0 + dy * t
+            zh = z0 + (z1 - z0) * t
+            if self.hmap is not None and zh < self.h_at(px, py) - 1e-6:
+                return False
+            v = self.at(int(px), int(py))
             if not v:
                 continue
             h = cell_height(v)
             if h >= 1.0:                       # 满高：照旧一定挡
                 return False
-            if z0 + (z1 - z0) * t < h:         # 视线从箱子下方穿过
+            if zh < h:                         # 视线从箱子下方穿过
                 return False
         return True
 
@@ -304,7 +354,10 @@ def _place_cover(g, W: int, H: int, rng: random.Random,
 
 def build_arena(rx: int = C.ARENA_TILES_X, ry: int = C.ARENA_TILES_Y,
                 room_w: int = C.ARENA_ROOM_W, room_h: int = C.ARENA_ROOM_H,
-                rng: random.Random | None = None, cover: bool = False) -> GridMap:
+                rng: random.Random | None = None, cover: bool = False,
+                terrain_amp: float | None = None,
+                terrain_freq: float | None = None,
+                terrain_seed: int | None = None) -> GridMap:
     """拼接式竞技场：把 rx × ry 个房间直接拼成一张大地图。
 
     每个房间内部空旷、四壁围合，相邻房间之间留一个门洞连通，
@@ -380,7 +433,47 @@ def build_arena(rx: int = C.ARENA_TILES_X, ry: int = C.ARENA_TILES_Y,
     gm.tiles_y = ry
     gm.room_w = room_w
     gm.room_h = room_h
+
+    # 地形高度图：独立种子，不消耗 cover 的 rng 序列，保证两边可复现、互不干扰。
+    amp = (C.TERRAIN_AMP if terrain_amp is None else terrain_amp)
+    freq = (C.TERRAIN_FREQ if terrain_freq is None else terrain_freq)
+    if amp > 0 and (rng is not None or C.TERRAIN_ENABLED):
+        seed = (C.TERRAIN_SEED if terrain_seed is None else terrain_seed)
+        hrng = random.Random(seed)
+        gm.hmap = make_heightmap(W, H, hrng, amp, freq)
     return gm
+
+
+def make_heightmap(w: int, h: int, rng: random.Random, amp: float,
+                   freq: float) -> list:
+    """平滑高度场（值噪声）。返回 h×w 的格高度列表；amp<=0 返回 None。
+
+    做法：在 freq 频率的粗网格上撒均匀随机值，再双线性插值成连续起伏。
+    地图最外圈强制为 0（粗网格边界行/列恒为 0），避免边缘出现悬空或峭壁。
+    高度图与房间布局无关、两边对称生成，所以不会让某一边天然占高地。
+    """
+    if amp <= 0:
+        return None
+    gx = max(3, int(w * freq) + 2)
+    gy = max(3, int(h * freq) + 2)
+    # 粗网格随机值，边界行/列（index 0 与 gx/gy）固定为 0
+    lat = [[0.0] * (gx + 1) for _ in range(gy + 1)]
+    for jy in range(1, gy):
+        for jx in range(1, gx):
+            lat[jy][jx] = rng.uniform(-1.0, 1.0)
+    out = [[0.0] * w for _ in range(h)]
+    for y in range(h):
+        for x in range(w):
+            fx = x / max(1, w - 1) * (gx - 1)
+            fy = y / max(1, h - 1) * (gy - 1)
+            ix, iy = int(fx), int(fy)
+            tx, ty = fx - ix, fy - iy
+            v00 = lat[iy][ix];     v10 = lat[iy][ix + 1]
+            v01 = lat[iy + 1][ix]; v11 = lat[iy + 1][ix + 1]
+            top = v00 * (1 - tx) + v10 * tx
+            bot = v01 * (1 - tx) + v11 * tx
+            out[y][x] = (top * (1 - ty) + bot * ty) * amp
+    return out
 
 
 # ---------------------------------------------------------------- 相机
@@ -460,10 +553,12 @@ def cast_ray(gmap: GridMap, px: float, py: float, rdx: float, rdy: float):
 def cast_ray_layers(gmap: GridMap, px: float, py: float,
                     rdx: float, rdy: float, max_layers: int = 4):
     """沿射线收集"层"，近 → 远。半高箱不终止射线（能从它上方看过去），
-    撞到满高格子才停。返回 [(距离, 命中面, 格子类型), ...]，至少一项。
+    撞到满高格子才停。返回 [(距离, 命中面, 格子类型, 命中格x, 命中格y), ...]，
+    至少一项。
 
     渲染用它把矮箱和它后面的东西分层画出来 —— 只有矮箱的话，你看到的
     是箱子挡住下半截、后面的人露出上半身。
+    命中格坐标给地形用：墙脚要踩在该处的地面高度上（起伏地图）。
     """
     out = []
     map_x, map_y = int(px), int(py)
@@ -503,12 +598,12 @@ def cast_ray_layers(gmap: GridMap, px: float, py: float,
             perp = (map_y - py + (1 - step_y) * 0.5) / rdy
         if perp < NEAR:
             perp = NEAR
-        out.append((perp, side, v))
+        out.append((perp, side, v, map_x, map_y))
         if cell_height(v) >= 1.0 or len(out) >= max_layers:
             break
 
     if not out:
-        out.append((1e9, 0, 0))
+        out.append((1e9, 0, 0, 0, 0))
     return out
 
 
@@ -674,7 +769,8 @@ class Renderer:
 
     # -- 地板网格 ------------------------------------------------------
 
-    def _world_line_screen(self, cam, ax, ay, bx, by, near=0.35):
+    def _world_line_screen(self, cam, ax, ay, bx, by, near=0.35,
+                           ga: float = 0.0, gb: float = 0.0):
         dx, dy = cam.dir()
         da = (ax - cam.x) * dx + (ay - cam.y) * dy
         db = (bx - cam.x) * dx + (by - cam.y) * dy
@@ -693,8 +789,10 @@ class Renderer:
                 return None
         if t0 >= t1:
             return None
-        pa = self.project(cam, ax + (bx - ax) * t0, ay + (by - ay) * t0, 0.0)
-        pb = self.project(cam, ax + (bx - ax) * t1, ay + (by - ay) * t1, 0.0)
+        pa = self.project(cam, ax + (bx - ax) * t0, ay + (by - ay) * t0,
+                          ga + (gb - ga) * t0)
+        pb = self.project(cam, ax + (bx - ax) * t1, ay + (by - ay) * t1,
+                          ga + (gb - ga) * t1)
         if pa is None or pb is None:
             return None
         return (pa[0], pa[1]), (pb[0], pb[1])
@@ -705,12 +803,19 @@ class Renderer:
         y0 = max(0, int(cam.y - radius))
         y1 = min(gmap.h, int(cam.y + radius) + 1)
         hz = self.horizon(cam)
+        has_h = gmap.hmap is not None
         for gx in range(x0, x1 + 1):
-            seg = self._world_line_screen(cam, gx, y0, gx, y1)
+            seg = self._world_line_screen(
+                cam, gx, y0, gx, y1,
+                ga=gmap.h_at(gx + 0.5, y0 + 0.5) if has_h else 0.0,
+                gb=gmap.h_at(gx + 0.5, y1 + 0.5) if has_h else 0.0)
             if seg:
                 pygame.draw.line(surf, C.C_GRID, seg[0], seg[1])
         for gy in range(y0, y1 + 1):
-            seg = self._world_line_screen(cam, x0, gy, x1, gy)
+            seg = self._world_line_screen(
+                cam, x0, gy, x1, gy,
+                ga=gmap.h_at(x0 + 0.5, gy + 0.5) if has_h else 0.0,
+                gb=gmap.h_at(x1 + 0.5, gy + 0.5) if has_h else 0.0)
             if seg:
                 pygame.draw.line(surf, C.C_GRID, seg[0], seg[1])
         # 地平线本身给一条细亮线，强化空间感
@@ -746,12 +851,13 @@ class Renderer:
             zbuf[ci] = 1e9
             box_d[ci] = 1e9
             box_y[ci] = 1e9
-            for dist, _side, cell in layers:
+            for dist, _side, cell, _hx, _hy in layers:
                 if dist >= 1e9:
                     break
                 hh = cell_height(cell)
                 line_h = h * self.vs / dist
-                y_top = hz + line_h * (eye_h - hh)
+                ground = gmap.h_at(_hx + 0.5, _hy + 0.5) if gmap.hmap else 0.0
+                y_top = hz + line_h * (eye_h - ground - hh)
                 if hh >= 1.0:
                     if zbuf[ci] >= 1e9:
                         zbuf[ci] = dist
@@ -761,13 +867,14 @@ class Renderer:
                     box_y[ci] = y_top
 
             # —— 再按 远→近 画，近的盖住远的；矮箱只画自己那截 ——
-            for dist, side, cell in reversed(layers):
+            for dist, side, cell, hx, hy in reversed(layers):
                 if dist >= 1e9:
                     continue
                 line_h = h * self.vs / dist
                 hh = cell_height(cell)
-                top = hz + line_h * (eye_h - hh)
-                bot = hz + line_h * eye_h
+                ground = gmap.h_at(hx + 0.5, hy + 0.5) if gmap.hmap else 0.0
+                top = hz + line_h * (eye_h - ground - hh)
+                bot = hz + line_h * (eye_h - ground)
                 y0 = int(top)
                 y1 = int(bot) + 1
                 if y1 <= 0 or y0 >= h:
@@ -792,9 +899,14 @@ class Renderer:
 
     # -- 精灵（靶子）---------------------------------------------------
 
-    def sprite_geom(self, cam: Camera, wx: float, wy: float, bot_h: float, bot_w: float):
-        """返回 (中心 x, 脚底 y, 高 px, 宽 px, 深度)，不可见返回 None。"""
-        r = self.project(cam, wx, wy, 0.0)
+    def sprite_geom(self, cam: Camera, wx: float, wy: float, bot_h: float, bot_w: float,
+                    ground_z: float = 0.0):
+        """返回 (中心 x, 脚底 y, 高 px, 宽 px, 深度)，不可见返回 None。
+
+        ground_z 是脚下地形高度：人/靶站在山坡上，脚底会抬高到对应世界高度，
+        渲染出来的小人就"踩"在地形上而不是浮空。
+        """
+        r = self.project(cam, wx, wy, ground_z)
         if r is None:
             return None
         sx, sy, depth = r

@@ -68,7 +68,8 @@ def draw_target(surf, renderer, cam, t, body=None, head=None, edge=None):
     body/head/edge 是可选的队伍配色 —— 不传就是原来靶子的蓝/橙，
     所以 5 个练习模式的观感一个像素都不会变，只有对战传队伍色进来。
     """
-    geom = renderer.sprite_geom(cam, t.x, t.y, t.h, t.w)
+    geom = renderer.sprite_geom(cam, t.x, t.y, t.h, t.w,
+                                 getattr(t, "ground_z", 0.0))
     if geom is None:
         return None
     cx, yb, hpx, wpx, depth = geom
@@ -400,13 +401,21 @@ def _draw_buy_menu(surf, renderer, m):
     text(surf, "买枪（1-5）  ·  6 烟雾弹", 18, (px + 18, py + 12), C.C_ACCENT)
     text(surf, f"$ {m.player_money}", 18, (px + pw - 18, py + 12), C.C_TEXT, anchor="tr")
 
+    # 库存：买过的枪一直留着，所以菜单要标出来哪些能直接切
+    owned = list(getattr(m.player_agent, "loadout", []) or [])
+    cur_idx = int(getattr(m.player_agent, "w_idx", 0) or 0)
     y = py + 44
     for i, key in enumerate(BUY_ORDER):
         wp = MATCH_WEAPONS[key]
-        afford = m.player_money >= wp.price
+        have = key in owned
+        equipped = have and owned.index(key) == cur_idx
+        afford = have or m.player_money >= wp.price
         col = C.C_TEXT if afford else C.C_DIM
-        text(surf, f"  {i + 1}. {wp.name}", 17, (px + 18, y), col)
-        text(surf, f"$ {wp.price}", 17, (px + pw - 18, y), col, anchor="tr")
+        tag = " · 装备中" if equipped else (" · 已拥有" if have else "")
+        text(surf, f"  {i + 1}. {wp.name}{tag}", 17, (px + 18, y),
+             C.C_ACCENT if equipped else col)
+        text(surf, "切换" if have else f"$ {wp.price}", 17, (px + pw - 18, y),
+             col, anchor="tr")
         y += 30
 
     afford = m.player_money >= C.SMOKE_PRICE
@@ -587,7 +596,7 @@ def draw_title(surf, renderer, game):
     diff = game.difficulty
     text(surf, f"[  ]    AI 难度： {DIFF_LABEL.get(diff, diff)}", 18,
          (w * 0.5, h * 0.72), C.C_TEXT, anchor="cm")
-    text(surf, "WASD 移动 · 鼠标 转视角 · 左键 开火 · 右键 开镜 · 空格 跳 · Ctrl 蹲 · G 烟雾弹 · ESC 菜单",
+    text(surf, "WASD 移动 · 鼠标 转视角 · 左键 开火 · 右键 开镜 · 空格 跳 · E 蹲 · G 烟雾弹 · ESC 菜单",
          13, (w * 0.5, h * 0.82), C.C_DIM, anchor="cm")
     text(surf, "H 返回主菜单 · Q 退出", 15, (w * 0.5, h * 0.86), C.C_DIM, anchor="cm")
 

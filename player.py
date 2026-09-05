@@ -42,7 +42,8 @@ class Player:
         self.z = 0.0           # 离地高度（世界单位；墙高 = 1.0）
         self.vz = 0.0
         self.airborne = False
-        # —— 蹲（Ctrl 按住）：下沉相机 + 收紧扩散 + 缩小命中轮廓 ——
+        self.ground_z = 0.0    # 脚下地形高度（高度图采样），相机随地形升降
+        # —— 蹲（按 E）：下沉相机 + 收紧扩散 + 缩小命中轮廓 ——
         self.crouch = False
         # 当前武器。练习模式默认这把的数值逐项等于 config 里的常量，
         # 所以接进来之后 5 个练习模式的手感一个像素都没变。
@@ -55,7 +56,9 @@ class Player:
     # ------------------------------------------------------------ 移动
 
     def update_move(self, dt, cam, gmap, keys):
-        self.crouch = bool(keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL])
+        # 蹲键 = E（原先是 Ctrl，但 Ctrl 组合键在 macOS 上常触发系统快捷键）。
+        # 按住生效、松开起身：下沉相机 + 收紧扩散 + 缩小命中轮廓。
+        self.crouch = bool(keys[pygame.K_e])
         fwd = (1 if keys[pygame.K_w] else 0) - (1 if keys[pygame.K_s] else 0)
         stf = (1 if keys[pygame.K_d] else 0) - (1 if keys[pygame.K_a] else 0)
 
@@ -92,6 +95,9 @@ class Player:
         speed = math.hypot(self.vx, self.vy)
         self.moving = speed > 0.7
         self.bob += speed * dt * 2.4
+
+        # 脚下地形高度：相机随地形升降（真·上下起伏）。平整地图恒为 0。
+        self.ground_z = gmap.h_at(cam.x, cam.y)
 
     # ------------------------------------------------------------ 跳跃
 
