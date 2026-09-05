@@ -1,8 +1,8 @@
 """3v3 武器库存与切枪自检。
 
-背景：原先 _buy() 是直接替换 a.weapon，买了第二把枪第一把就消失，
-交火中（state != prep）按 1-5 完全没有反应 —— 也就是"买了两把却切不了"。
-现在改成库存制：买了就存着，买枪阶段和交火阶段都能在已拥有的武器间切换。
+背景：原先 _buy() 是直接替换 a.weapon，买了第二把枪第一把就消失。
+现在：每回合开始库存重置回手枪（CS 式经济局）；同一回合内买的多把枪
+用 C 键循环切换，买枪阶段和交火阶段都行；1-5 只在买枪阶段负责购买。
 
 直接跑：  python3 tests/test_loadout.py
 """
@@ -192,6 +192,51 @@ def test_human_input_weapon():
     check("交火中能切回已拥有的枪", a.weapon.key == "pistol", a.weapon.key)
 
 
+def test_round_reset():
+    """每一局（回合）都重置：从没有买过的枪开始，只带免费手枪。"""
+    m = fresh()
+    m.player_money = 99999
+    m.player_buy("rifle")
+    m.player_buy("awp")
+    check("买完手里是 AWP", m.player_agent.weapon.key == "awp")
+
+    m.start_round()
+    p = m.player_agent
+    check("新回合库存重置回手枪", p.loadout == ["pistol"], f"{p.loadout}")
+    check("新回合手持手枪", p.weapon.key == "pistol", p.weapon.key)
+    check("新回合弹匣重置", p.mags == {"pistol": MATCH_WEAPONS["pistol"].mag},
+          f"{p.mags}")
+
+    ai = [x for x in m.agents if not x.is_player][0]
+    check("AI 新回合同样重置", ai.loadout == ["pistol"], f"{ai.loadout}")
+
+
+def test_cycle_weapon():
+    """C 键：在已买的枪里循环切换；只有一把时不切；切枪打断换弹。"""
+    m = fresh()
+    p = m.player_agent
+    check("只有手枪时 C 不切换", m.player_cycle() is False)
+
+    m.player_money = 99999
+    m.player_buy("rifle")          # 现在: pistol -> rifle
+    check("C 从手枪切到步枪", p.weapon.key == "rifle", p.weapon.key)
+    check("C 再切到下一把", m.player_cycle() is True)
+    check("库存只有两把 → 又回到手枪", p.weapon.key == "pistol", p.weapon.key)
+
+    # 循环顺序：pistol -> rifle -> pistol -> ...
+    m.player_cycle()
+    check("循环回步枪", p.weapon.key == "rifle", p.weapon.key)
+
+    # 切枪打断换弹（先打空弹匣才允许换）
+    from ai import start_reload
+    p.mags[p.weapon.key] = 1
+    check("未满弹匣能起换弹", start_reload(p) is True)
+    check("换弹中", p.reload_t > 0, f"{p.reload_t:.2f}")
+    m.player_cycle()
+    check("切枪打断换弹", p.reload_t == 0.0, f"{p.reload_t}")
+    check("打断后武器已切换", p.weapon.key == "pistol", p.weapon.key)
+
+
 def main():
     print("=== 3v3 武器库存 / 切枪 ===")
     test_default_loadout(); print()
@@ -204,6 +249,8 @@ def main():
     test_score_mode_still_free(); print()
     test_snapshot_sync(); print()
     test_human_input_weapon(); print()
+    test_round_reset(); print()
+    test_cycle_weapon(); print()
     print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for f in FAIL:

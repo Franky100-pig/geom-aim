@@ -104,11 +104,17 @@ class Agent:
         self.muzzle = 0.0          # 枪口火光计时
         self.stuck = 0             # 连续卡墙计数（用于兜底绕行）
 
-        # 武器库存（对战回合制）：买过的枪会留着，回合之间不清空，
-        # 所以"买了两把"之后能来回切。开局人手一把手枪。
-        # loadout 存武器 key（见 weapons.MATCH_WEAPONS），w_idx 指向当前那把。
+        # 武器库存（对战回合制）：每回合开始重置回手枪，同一回合内买过的枪
+        # 随时用 C 键来回切。loadout 存武器 key（见 weapons.MATCH_WEAPONS），
+        # w_idx 指向当前那把。
         self.loadout: list[str] = ["pistol"]
         self.w_idx = 0
+
+        # 弹药（仅 3v3 对战生效）：mags[武器key] = 弹匣里的余弹。
+        # 不在 dict 里的枪视为满弹（积分赛/练习不做弹药限制）。
+        # reload_t > 0 = 正在换弹，期间不能开火；切枪打断换弹（余弹保留）。
+        self.mags: dict = {}
+        self.reload_t = 0.0
 
         # 战术：偷背身。flank_goal 非空 = 正在绕后；flank_cd 是两次包抄的冷却。
         self.flank_goal = None     # (x, y) 打算绕到的落点
@@ -395,6 +401,40 @@ def _flank_rate(tune: dict, exposed: bool) -> float:
     return min(rate, 3.0)
 
 
+# ---------------------------------------------------------------- 弹药
+
+def ammo_of(a) -> int:
+    """当前武器的余弹。没记录过的枪视为满弹（积分赛/练习不做弹药限制）。"""
+    return a.mags.get(a.weapon.key, a.weapon.mag)
+
+
+def start_reload(a) -> bool:
+    """开始换弹：已满或正在换就不动。返回是否真的开始了。"""
+    if a.reload_t > 0:
+        return False
+    if ammo_of(a) >= a.weapon.mag:
+        return False
+    a.reload_t = C.RELOAD_TIME
+    return True
+
+
+def cancel_reload(a):
+    """切枪打断换弹：余弹保留在弹匣里，换弹进度清零。"""
+    a.reload_t = 0.0
+
+
+def tick_reload(a, dt: float) -> bool:
+    """换弹计时；走完补满弹匣。返回"这一帧刚完成换弹"。"""
+    if a.reload_t <= 0:
+        return False
+    a.reload_t -= dt
+    if a.reload_t <= 0:
+        a.reload_t = 0.0
+        a.mags[a.weapon.key] = a.weapon.mag
+        return True
+    return False
+
+
 # ---------------------------------------------------------------- 开火
 
 def _try_fire(m, a, dt: float, rng: random.Random, tune: dict):
@@ -404,6 +444,14 @@ def _try_fire(m, a, dt: float, rng: random.Random, tune: dict):
     tgt = a.target
     if tgt is None or not tgt.alive:
         return
+
+    # 弹药（仅 3v3 对战）：换弹中打不了；打空自动换弹
+    if m.mode == "match":
+        if a.reload_t > 0:
+            return
+        if ammo_of(a) <= 0:
+            start_reload(a)
+            return
 
     dist = math.hypot(tgt.x - a.x, tgt.y - a.y)
     eye_z = a.ground_z + a.h * 0.5
@@ -415,6 +463,10 @@ def _try_fire(m, a, dt: float, rng: random.Random, tune: dict):
     # 烟挡视线：目标躲进烟里（或自己站在烟里）就别开枪了
     if m.smokes.blocks(a.x, a.y, tgt.x, tgt.y):
         return
+
+    # 扣一发子弹（打进墙里也算打出去的一发）
+    if m.mode == "match":
+        a.mags[a.weapon.key] = ammo_of(a) - 1
 
     dxr, dyr = math.cos(a.yaw), math.sin(a.yaw)
     wall_d = cast_ray_block(m.gmap, a.x, a.y, dxr, dyr, eye_z, slope)
@@ -476,6 +528,9 @@ def update_agent(m, a, dt: float, rng: random.Random, tune: dict):
     a.strafe_timer -= dt
     if a.smoke_cd > 0:
         a.smoke_cd = max(0.0, a.smoke_cd - dt)
+
+    # 换弹计时（3v3）：走完补满弹匣；没在换弹时是空操作
+    tick_reload(a, dt)
 
     # 脚下地形高度（高度图采样）；平整地图 h_at 恒返回 0，无副作用。
     a.ground_z = m.gmap.h_at(a.x, a.y)

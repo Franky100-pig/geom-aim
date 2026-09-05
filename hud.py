@@ -146,6 +146,26 @@ def muzzle_pos(renderer, player):
     return (ox - 18 * u, oy - 79 * u)
 
 
+def draw_ammo(surf, renderer, ammo: int, mag: int, reload_t: float):
+    """右下角武器上方的弹药读数（仅 3v3 对战调用）。
+
+    换弹时显示"换弹中…"+ 进度条；弹匣打空数字变警示色。
+    """
+    u = renderer.h / 720.0
+    x = int(renderer.w * 0.72)
+    y = int(renderer.h * 0.78)
+    if reload_t > 0.0:
+        text(surf, "换弹中…", 17, (x, y), C.C_ACCENT, anchor="rm")
+        k = clamp(1.0 - reload_t / C.RELOAD_TIME, 0.0, 1.0)
+        bw, bh = int(120 * u), max(3, int(5 * u))
+        bx = x - bw // 2
+        pygame.draw.rect(surf, (60, 66, 82), (bx, y + 14, bw, bh))
+        pygame.draw.rect(surf, C.C_ACCENT, (bx, y + 14, int(bw * k), bh))
+        return
+    col = C.C_TEXT if ammo > 0 else C.C_WARN
+    text(surf, f"{ammo} / {mag}", 20, (x, y), col, anchor="rm")
+
+
 def draw_weapon(surf, renderer, player):
     """右下角的几何枪，返回枪口屏幕坐标。"""
     u = renderer.h / 720.0
@@ -291,7 +311,7 @@ def draw_scoreboard(surf, renderer, game):
 
     if game.hint_alpha > 0:
         a = int(255 * clamp(game.hint_alpha, 0.0, 1.0))
-        text(surf, "WASD 移动   鼠标 转视角   左键 开火   空格 跳   G 烟雾弹   ESC 菜单",
+        text(surf, "WASD 移动   鼠标 转视角   左键 开火   空格 跳   G 烟雾弹   C 切枪   R 换弹   ESC 菜单",
              15, (w * 0.5, renderer.h - 34), C.C_DIM, anchor="cm", alpha=a)
 
 

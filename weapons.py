@@ -32,6 +32,7 @@ class Weapon:
     spray_max: float        # 扩散上限
     move_spray: float       # 移动中额外扩散
     kill_reward: int        # 击杀金钱奖励
+    mag: int = 30           # 弹匣容量（发）；换弹一次补满，耗时 C.RELOAD_TIME
 
 
 # ---------------------------------------------------------------- 练习模式
@@ -46,7 +47,7 @@ def practice_rifle() -> Weapon:
         recoil_px=C.RECOIL_PX, recoil_yaw_px=C.RECOIL_YAW_PX,
         spray_first=C.SPRAY_FIRST, spray_per_shot=C.SPRAY_PER_SHOT,
         spray_max=C.SPRAY_MAX, move_spray=C.MOVE_SPRAY,
-        kill_reward=0,
+        kill_reward=0, mag=30,
     )
 
 
@@ -55,7 +56,7 @@ def practice_sniper() -> Weapon:
     w = practice_rifle()
     return replace(w, key="pr_sniper", name="狙击",
                    bolt_time=C.BOLT_TIME, zoom=C.ADS_ZOOM,
-                   recoil_px=C.RECOIL_PX * 0.4)
+                   recoil_px=C.RECOIL_PX * 0.4, mag=10)
 
 
 # ---------------------------------------------------------------- 对战模式
@@ -72,6 +73,7 @@ MATCH_WEAPONS: dict[str, Weapon] = {
         spray_first=0.0008, spray_per_shot=0.0012,
         spray_max=0.010, move_spray=0.0040,
         kill_reward=300,
+        mag=12,
     ),
     "smg": Weapon(
         key="smg", name="冲锋枪", price=1400,
@@ -82,6 +84,7 @@ MATCH_WEAPONS: dict[str, Weapon] = {
         spray_first=0.0025, spray_per_shot=0.0016,
         spray_max=0.020, move_spray=0.0038,
         kill_reward=600,
+        mag=30,
     ),
     "rifle": Weapon(
         key="rifle", name="步枪", price=2700,
@@ -92,6 +95,7 @@ MATCH_WEAPONS: dict[str, Weapon] = {
         spray_first=C.SPRAY_FIRST, spray_per_shot=C.SPRAY_PER_SHOT,
         spray_max=C.SPRAY_MAX, move_spray=C.MOVE_SPRAY,
         kill_reward=300,
+        mag=30,
     ),
     "dmr": Weapon(
         key="dmr", name="连狙", price=2200,
@@ -102,6 +106,7 @@ MATCH_WEAPONS: dict[str, Weapon] = {
         spray_first=0.0015, spray_per_shot=0.0010,
         spray_max=0.012, move_spray=0.0060,
         kill_reward=300,
+        mag=20,
     ),
     "awp": Weapon(
         key="awp", name="狙击", price=4750,
@@ -113,6 +118,7 @@ MATCH_WEAPONS: dict[str, Weapon] = {
         spray_first=0.0100, spray_per_shot=0.0,
         spray_max=0.0100, move_spray=0.0080,
         kill_reward=100,
+        mag=5,
     ),
 }
 

@@ -17,7 +17,7 @@ import math
 import random
 
 import config as C
-from ai import Agent, update_agent
+from ai import Agent, update_agent, ammo_of, start_reload, cancel_reload, tick_reload
 from engine import clamp, cast_ray_block
 from nades import SmokeField
 from weapons import BUY_ORDER, MATCH_WEAPONS, match_weapon
@@ -250,6 +250,15 @@ class Match:
             if not self._select(a, key) and self.state == "prep":
                 self._buy(a, key)
 
+        # C 循环切枪 / R 换弹（真人客户端经输入上行，主机代为执行）
+        if inp.get("cycle"):
+            self.cycle_weapon(a)
+        if inp.get("reload"):
+            start_reload(a)
+
+        # 换弹计时（3v3）：走完补满弹匣
+        tick_reload(a, dt)
+
         if bool(inp.get("fire", False)) and a.fire_cd <= 0.0:
             self.fire_human(a)
 
@@ -266,6 +275,14 @@ class Match:
 
     def fire_human(self, a: "Agent"):
         """真人开火：从 Agent 当前位置/朝向做命中判定（几何与玩家 _do_shot 一致）。"""
+        # 弹药（仅 3v3）：换弹中打不了；打空自动换弹
+        if self.mode == "match":
+            if a.reload_t > 0:
+                return
+            if ammo_of(a) <= 0:
+                start_reload(a)
+                return
+            a.mags[a.weapon.key] = ammo_of(a) - 1
         a.shots += 1
         eye_z = a.ground_z + a.h * 0.5 + a.z
         dx, dy = math.cos(a.yaw), math.sin(a.yaw)
@@ -372,10 +389,17 @@ class Match:
             a.invuln = 0.0
             a.crouch = False
             a.h = C.BOT_H
+            # 每回合重置武器：只带免费手枪上场，买过的枪不带进下一回合
+            # （CS 式经济局）。同一回合内买的多把枪用 C 键来回切。
+            a.loadout = ["pistol"]
+            a.w_idx = 0
+            a.weapon = MATCH_WEAPONS["pistol"]
+            a.mags = {"pistol": MATCH_WEAPONS["pistol"].mag}
+            a.reload_t = 0.0
 
         self._place_all()
 
-        # AI 买枪
+        # AI 买枪（每回合库存清空后重新买）
         for a in self.agents:
             if not a.is_player:
                 self._ai_buy(a)
@@ -608,20 +632,41 @@ class Match:
         """切到库存里已有的某把枪。库存里没有就返回 False（不花钱、不改状态）。
 
         切枪本身不受回合阶段限制 —— 买枪阶段和交火中都能切，否则会出现
-        "买了两把枪却切不回去"的尴尬。
+        "买了两把枪却切不回去"的尴尬。切枪会打断换弹（余弹保留）。
         """
         if key not in a.loadout:
             return False
         a.weapon = MATCH_WEAPONS[key]
         a.w_idx = a.loadout.index(key)
+        cancel_reload(a)
         return True
 
+    def cycle_weapon(self, a) -> bool:
+        """C 键循环切枪：在已买的枪里转到下一把。只有一把时切了也是它。"""
+        if len(a.loadout) < 2:
+            return False
+        a.w_idx = (a.w_idx + 1) % len(a.loadout)
+        a.weapon = MATCH_WEAPONS[a.loadout[a.w_idx]]
+        cancel_reload(a)
+        return True
+
+    def player_cycle(self) -> bool:
+        """玩家 C 键：循环切换已拥有的武器。"""
+        return self.cycle_weapon(self.player_agent)
+
     def player_select(self, key: str) -> bool:
-        """玩家切换到已拥有的武器（1-5 键）。没买过返回 False。"""
+        """玩家直接切到已拥有的某把枪。没买过返回 False。"""
         return self._select(self.player_agent, key)
 
+    def player_start_reload(self) -> bool:
+        """玩家 R 键：换弹（2s，期间不能开火）。"""
+        return start_reload(self.player_agent)
+
     def _buy(self, a, key: str, money: int | None = None):
-        """买枪：已经拥有就免费切过去（不重复扣钱），否则扣钱入库并装备。"""
+        """买枪：已经拥有就免费切过去（不重复扣钱），否则扣钱入库并装备。
+
+        新买的枪弹匣是满的；已拥有的枪只切换、余弹不变。
+        """
         w = MATCH_WEAPONS[key]
         if key in a.loadout:
             self._select(a, key)
@@ -637,17 +682,17 @@ class Match:
         a.loadout.append(key)
         a.weapon = w
         a.w_idx = a.loadout.index(key)
+        a.mags[key] = w.mag
+        cancel_reload(a)
         return True
 
     def _ai_buy(self, a):
         """AI 买枪 + 买烟。队友和敌人都用同一套，所以两边都会扔烟。
 
-        已经有步枪就不再重复买（库存里留着就能一直用），省下的钱去买烟 ——
-        否则 AI 每回合都重新买一把步枪，经济永远攒不起来。
+        每回合库存清空回手枪，所以 AI 按资金重新买主武器；
+        实在买不起就保留开局的手枪。
         """
-        if "rifle" in a.loadout:
-            pass          # 主武器还在（回合之间不清空），这回合不用再买
-        elif a.money >= MATCH_WEAPONS["rifle"].price:
+        if a.money >= MATCH_WEAPONS["rifle"].price:
             self._buy(a, "rifle")
         elif ("smg" not in a.loadout and self.rng.random() < 0.65
               and a.money >= MATCH_WEAPONS["smg"].price):
@@ -842,6 +887,7 @@ class Match:
                 # 用武器 key（不是中文名）同步，否则客户端还原时找不到对应武器
                 weapon=(a.weapon.key if a.weapon else "rifle"),
                 loadout=list(a.loadout), w_idx=a.w_idx,
+                mags=dict(a.mags), reload_t=round(a.reload_t, 2),
                 controller=a.controller, is_local=a.is_player, name=a.name,
                 kills=a.kills, deaths=a.deaths, shots=a.shots, hits=a.hits,
                 smoke_charges=a.smoke_charges,
@@ -887,6 +933,8 @@ class Match:
             a.w_idx = int(ad.get("w_idx", 0) or 0)
             if a.w_idx >= len(a.loadout):
                 a.w_idx = 0
+            a.mags = dict(ad.get("mags") or {})
+            a.reload_t = float(ad.get("reload_t", 0.0) or 0.0)
             a.kills = ad.get("kills", 0)
             a.deaths = ad.get("deaths", 0)
             a.shots = ad.get("shots", 0)

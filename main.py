@@ -27,6 +27,7 @@ import config as C  # noqa: E402
 import hud  # noqa: E402
 from audio import Audio  # noqa: E402
 from effects import Effects  # noqa: E402
+from ai import ammo_of, start_reload  # noqa: E402
 from engine import Camera, Renderer, build_arena, cast_ray, cast_ray_block  # noqa: E402
 from match import Match  # noqa: E402
 from nades import SmokeField  # noqa: E402
@@ -101,6 +102,8 @@ class Game:
         self._pend_look = 0.0       # 待上行的鼠标 yaw 增量（客户端用）
         self.client_weapon = "rifle"
         self._smoke_pending = False  # 客户端 G 键边沿（一次性上报）
+        self._cycle_pending = False  # 客户端 C 键边沿：循环切枪
+        self._reload_pending = False # 客户端 R 键边沿：换弹
         self.connect_error = ""
         self.score = 0
         self.combo = 0
@@ -297,13 +300,18 @@ class Game:
         mbt = pygame.mouse.get_pressed()
         mvx = (1 if keys[pygame.K_w] else 0) - (1 if keys[pygame.K_s] else 0)
         mvy = (1 if keys[pygame.K_d] else 0) - (1 if keys[pygame.K_a] else 0)
-        crouch = bool(keys[pygame.K_LCTRL] or keys[pygame.K_RCTRL])
+        crouch = bool(keys[pygame.K_e])          # 蹲键与单机统一为 E
         jump = bool(keys[pygame.K_SPACE])
         fire = bool(mbt[0])
         smoke = self._smoke_pending
         self._smoke_pending = False
+        cycle = self._cycle_pending
+        self._cycle_pending = False
+        reload = self._reload_pending
+        self._reload_pending = False
         inp = dict(mvx=mvx, mvy=mvy, crouch=crouch, jump=jump, fire=fire,
-                   weapon=self.client_weapon, smoke=smoke, dyaw=self._pend_look)
+                   weapon=self.client_weapon, smoke=smoke, dyaw=self._pend_look,
+                   cycle=cycle, reload=reload)
         self._pend_look = 0.0
 
         self._net_acc += dt
@@ -579,6 +587,8 @@ class Game:
         m, p = self.match, self.player
         if m.state != "live" or m.player_dead:
             return
+        if not self._match_can_shoot():
+            return
         w = p.weapon
         if w.bolt_time > 0:
             self.fire_sniper()                 # AWP：一发一拉栓
@@ -617,6 +627,12 @@ class Game:
                 return
             if key == pygame.K_g:
                 self._smoke_pending = True
+                return
+            if key == pygame.K_c:
+                self._cycle_pending = True
+                return
+            if key == pygame.K_r:
+                self._reload_pending = True
                 return
             if key == pygame.K_ESCAPE:
                 self.to_title()
@@ -663,12 +679,7 @@ class Game:
                 idx = key - pygame.K_1
                 if idx < len(BUY_ORDER):
                     w = BUY_ORDER[idx]
-                    if self.match.player_select(w):
-                        # 库存里已有 → 直接切（买枪阶段和交火中都行）
-                        self.player.weapon = self.match.player_agent.weapon
-                        self.player.bolt = 0.0
-                        self.audio.play("spawn")
-                    elif self.match.state == "prep":
+                    if self.match.state == "prep":
                         if self.match.player_buy(w):
                             self.player.weapon = self.match.player_agent.weapon
                             self.player.bolt = 0.0
@@ -678,7 +689,7 @@ class Game:
                                           "钱不够", C.C_WARN)
                     else:
                         self.fx.popup(self.renderer.w * 0.5, self.renderer.h * 0.60,
-                                      "还没买这把枪", C.C_WARN)
+                                      "交火中不能买枪 · 按 C 切枪", C.C_DIM)
                 return
             if key == pygame.K_6:
                 if self.match.state == "prep":
@@ -688,6 +699,19 @@ class Game:
                     else:
                         self.fx.popup(self.renderer.w * 0.5, self.renderer.h * 0.60,
                                       "钱不够", C.C_WARN)
+                return
+            # C：在已买的枪里循环切换（买枪阶段和交火中都行）
+            if key == pygame.K_c and self.state == "play":
+                if self.match.player_cycle():
+                    self.player.weapon = self.match.player_agent.weapon
+                    self.player.bolt = 0.0
+                    self.audio.play("spawn")
+                return
+            # R：换弹（2s）。打完整场后的重开仍走下面原来的 R 分支
+            if key == pygame.K_r and not self.match.match_over:
+                if self.match.player_start_reload():
+                    self.fx.popup(self.renderer.w * 0.5, self.renderer.h * 0.60,
+                                  "换弹中…", C.C_ACCENT)
                 return
 
         if key == pygame.K_ESCAPE:
@@ -972,7 +996,8 @@ class Game:
 
         # 全自动武器：按住左键连发。半自动/栓动由 _match_press 单点处理
         if (m.state == "live" and not m.player_dead and self.player.firing
-                and self.player.weapon.auto and self.player.can_fire()):
+                and self.player.weapon.auto and self.player.can_fire()
+                and self._match_can_shoot()):
             self.fire()
 
         m.update(dt)
@@ -1018,6 +1043,22 @@ class Game:
 
     # ------------------------------------------------------------ 开火
 
+    def _match_can_shoot(self) -> bool:
+        """3v3 对战弹药门：换弹中不能开火；弹匣打空自动起换弹并返回 False。
+
+        练习 / 积分赛不受弹药限制（恒 True），行为不变。
+        """
+        m = self.match
+        if m is None or m.mode != "match":
+            return True
+        pa = m.player_agent
+        if pa.reload_t > 0:
+            return False
+        if ammo_of(pa) <= 0:
+            start_reload(pa)
+            return False
+        return True
+
     def fire(self):
         # 普通武器：连发，走 AK 式后坐力
         self.player.on_shot()
@@ -1037,6 +1078,9 @@ class Game:
         self.audio.play("shot")
         if self.match is not None:
             self.match.stats["shots"] += 1
+            if self.match.mode == "match":
+                pa = self.match.player_agent
+                pa.mags[pa.weapon.key] = ammo_of(pa) - 1
 
         dx, dy = cam.dir()
         pux, puy = cam.plane_unit()
@@ -1210,6 +1254,9 @@ class Game:
 
         self.fx.draw_world_fx(surf)
         hud.draw_weapon(surf, r, self.player)
+        if self.match is not None and self.match.mode == "match":
+            pa = self.match.player_agent
+            hud.draw_ammo(surf, r, ammo_of(pa), pa.weapon.mag, pa.reload_t)
 
         scoped = self.player.ads and (self.match is not None
                                       or self.range.mode == "sniper")
