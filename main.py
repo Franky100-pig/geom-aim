@@ -102,6 +102,7 @@ class Game:
         self._pend_look = 0.0       # 待上行的鼠标 yaw 增量（客户端用）
         self.client_weapon = "rifle"
         self._smoke_pending = False  # 客户端 G 键边沿（一次性上报）
+        self.minimap_big = False       # M 键：小地图放大一倍
         self._cycle_pending = False  # 客户端 C 键边沿：循环切枪
         self._reload_pending = False # 客户端 R 键边沿：换弹
         self.connect_error = ""
@@ -752,6 +753,12 @@ class Game:
             self.combo_timer = 0.0
             return
 
+        # ---------- 对战 / 积分赛：M 切换小地图放大 ----------
+        if (key == pygame.K_m and self.match is not None
+                and self.state in ("play", "client")):
+            self.minimap_big = not self.minimap_big
+            return
+
         # ---------- 通用动作：空格跳 / G 扔烟 ----------
         if self.state == "play" and key == pygame.K_SPACE:
             self.player.try_jump()
@@ -1273,6 +1280,8 @@ class Game:
                 hud.draw_score_hud(surf, r, self)
             else:
                 hud.draw_match_hud(surf, r, self)
+            # 小地图：3v3 与积分赛都有（自由练习 = match 为 None，不显示）
+            hud.draw_minimap(surf, r, self)
         else:
             hud.draw_scoreboard(surf, r, self)
 

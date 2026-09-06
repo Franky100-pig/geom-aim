@@ -146,6 +146,126 @@ def muzzle_pos(renderer, player):
     return (ox - 18 * u, oy - 79 * u)
 
 
+# ---------------------------------------------------------------- 小地图
+
+# 圆形小地图的基本尺寸（720p 基准半径）；M 键放大时半径 ×2。
+MINIMAP_R = 62.0
+MINIMAP_VIEW = 17.0        # 世界单位：小地图能看到的半径范围
+MINIMAP_ZOOM = 2           # M 键放大倍率
+
+# 地形色块：让玩家能认出哪里是墙、哪里是掩体，不至于在拼接地图里迷路。
+MINIMAP_CELL_COL = {
+    1: (78, 88, 112),        # 普通墙
+    2: (104, 116, 148),      # 强调柱
+    3: (92, 122, 96),        # 半高箱（矮掩体）
+    4: (128, 104, 84),       # 高箱（高掩体）
+}
+
+
+def minimap_radius(game, renderer) -> int:
+    """小地图半径（像素）。M 放大后翻倍 —— 半径和缩放同倍，看到的还是同一片区域，只是更大更清楚。"""
+    u = renderer.h / 720.0
+    return int(MINIMAP_R * u * (MINIMAP_ZOOM if game.minimap_big else 1))
+
+
+def minimap_project(yaw: float, r: float, scale: float, r_c: float,
+                    wx: float, wy: float, px: float, py: float):
+    """世界坐标 → 小地图本地坐标（圆心为原点所在的 r,r 偏移由调用方补）。
+
+    地图随视角旋转：相机正前方永远指向屏幕上方。
+    返回 (mx, my)，越界与否由调用方按半径判断。
+    """
+    dx, dy = wx - px, wy - py
+    fwd = dx * math.cos(yaw) + dy * math.sin(yaw)         # 前方分量 → 屏幕上方
+    right = -dx * math.sin(yaw) + dy * math.cos(yaw)      # 右方分量 → 屏幕右方
+    return r_c + right * scale, r_c - fwd * scale
+
+
+def minimap_mates(m):
+    """小地图上要画的自己人：只含本队（含自己），敌人位置一律保密。
+
+    返回 [(agent, is_self), ...]。自己排在最前，画在最后才不会被队友盖住。
+    """
+    me = m.player_agent
+    if me is None:
+        return []
+    out = [(a, a is me) for a in m.agents
+           if a.team == me.team and a.alive]
+    out.sort(key=lambda it: 0 if it[1] else 1)
+    return out
+
+
+def draw_minimap(surf, renderer, game):
+    """左上角圆形小地图（仅 3v3 / 积分赛；自由练习不显示）。
+
+    - 只画自己和队友，**敌人位置保密**
+    - 地图随视角旋转（正前方永远朝上），自己是中间的白色箭头
+    - 画出墙 / 柱子 / 掩体色块，防止在拼接地图里迷路
+    - M 键放大一倍：半径与缩放同倍，视野范围不变、看得更清楚
+    """
+    m = game.match
+    if m is None:
+        return
+    cam = game.cam
+    gmap = game.gmap
+    if cam is None or gmap is None:
+        return
+
+    u = renderer.h / 720.0
+    r = minimap_radius(game, renderer)
+    size = r * 2
+    cx, cy = int(26 * u) + r, int(78 * u) + r     # 左上角，避开"我方/敌方"文字
+    scale = r / MINIMAP_VIEW                       # 像素 / 世界单位
+
+    surf_mm = pygame.Surface((size, size), pygame.SRCALPHA)
+    pygame.draw.circle(surf_mm, (12, 16, 26, 205), (r, r), r)   # 底色
+    pygame.draw.circle(surf_mm, (46, 58, 84, 120), (r, r), r, max(1, int(1.2 * u)))
+
+    # —— 地形色块：只画圆内的格子 ——
+    half = int(MINIMAP_VIEW) + 2
+    gx0, gx1 = max(0, int(cam.x) - half), min(gmap.w, int(cam.x) + half + 1)
+    gy0, gy1 = max(0, int(cam.y) - half), min(gmap.h, int(cam.y) + half + 1)
+    cell_px = max(1.0, scale)
+    lim2 = r * r
+    for gy in range(gy0, gy1):
+        for gx in range(gx0, gx1):
+            v = gmap.at(gx, gy)
+            if not v:
+                continue
+            mx, my = minimap_project(cam.yaw, r, scale, r,
+                                     gx + 0.5, gy + 0.5, cam.x, cam.y)
+            ex, ey = mx - r, my - r
+            if ex * ex + ey * ey > lim2:
+                continue
+            col = MINIMAP_CELL_COL.get(v, (78, 88, 112))
+            pygame.draw.rect(surf_mm, col + (255,),
+                             (mx - cell_px * 0.5, my - cell_px * 0.5,
+                              cell_px, cell_px))
+
+    # —— 队友（含自己）——
+    for a, is_self in minimap_mates(m):
+        mx, my = minimap_project(cam.yaw, r, scale, r, a.x, a.y, cam.x, cam.y)
+        ex, ey = mx - r, my - r
+        if ex * ex + ey * ey > (r - 2) * (r - 2):
+            continue
+        if is_self:
+            # 自己：朝上的白色箭头（因为地图随视角转，自己恒朝上）
+            s = max(3.0, 5.0 * u)
+            pygame.draw.polygon(surf_mm, (240, 246, 255, 255), [
+                (mx, my - s), (mx - s * 0.72, my + s * 0.7),
+                (mx + s * 0.72, my + s * 0.7)])
+        else:
+            rad = max(1.5, 3.0 * u)
+            pygame.draw.circle(surf_mm, C.C_ALLY_HUD + (255,), (int(mx), int(my)), int(rad))
+
+    # —— 圆形裁切 + 外圈 ——
+    mask = pygame.Surface((size, size), pygame.SRCALPHA)
+    pygame.draw.circle(mask, (255, 255, 255, 255), (r, r), r)
+    surf_mm.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    surf.blit(surf_mm, (cx - r, cy - r))
+    pygame.draw.circle(surf, C.C_ACCENT, (cx, cy), r, max(1, int(1.4 * u)))
+
+
 def draw_ammo(surf, renderer, ammo: int, mag: int, reload_t: float):
     """右下角武器上方的弹药读数（仅 3v3 对战调用）。
 
@@ -311,7 +431,7 @@ def draw_scoreboard(surf, renderer, game):
 
     if game.hint_alpha > 0:
         a = int(255 * clamp(game.hint_alpha, 0.0, 1.0))
-        text(surf, "WASD 移动   鼠标 转视角   左键 开火   空格 跳   G 烟雾弹   C 切枪   R 换弹   ESC 菜单",
+        text(surf, "WASD 移动   鼠标 转视角   左键 开火   空格 跳   G 烟雾弹   C 切枪   R 换弹   M 地图   ESC 菜单",
              15, (w * 0.5, renderer.h - 34), C.C_DIM, anchor="cm", alpha=a)
 
 
