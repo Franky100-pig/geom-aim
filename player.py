@@ -71,7 +71,11 @@ class Player:
             wx, wy = wx / n, wy / n
 
         if n > 1e-6:
-            maxv = C.MOVE_SPEED * (C.SNIPER_MOVE_MUL if self.ads else 1.0)
+            # 开镜减速只对"真能放大"的狙击系武器生效（连狙 2x / 狙击 4x）。
+            # 步枪/冲锋枪 zoom=1.0，即便误触开镜也不该减速；否则从狙击切回步枪时
+            # ads 仍是真，会一直以 0.55 倍速移动（Bug 2）。
+            scoped = self.ads and self.weapon.zoom > 1.0
+            maxv = C.MOVE_SPEED * (C.SNIPER_MOVE_MUL if scoped else 1.0)
             k = min(1.0, C.ACCEL * dt / maxv)
             self.vx += (wx * maxv - self.vx) * k
             self.vy += (wy * maxv - self.vy) * k
