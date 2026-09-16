@@ -266,6 +266,38 @@ def draw_minimap(surf, renderer, game):
     pygame.draw.circle(surf, C.C_ACCENT, (cx, cy), r, max(1, int(1.4 * u)))
 
 
+def draw_attack_indicator(surf, renderer, cam, pings):
+    """被攻击提示：屏幕正中央的环形红色弧，指向子弹来源方向（与小地图同朝向）。
+
+    pings 是 Match.attack_pings：[(来源x, 来源y, 剩余寿命), ...]。
+    用相机朝向把"世界来源方向"投影成屏幕角度 —— 正前方=屏幕上方，右方=屏幕右方，
+    与 draw_minimap 的 minimap_project 完全一致，玩家转视角时红弧跟着转。
+    每条弧在 ATTACK_PING_LIFE 秒内淡出；同帧挨多发会叠加多个方向。
+    """
+    u = renderer.h / 720.0
+    cx, cy = renderer.w * 0.5, renderer.h * 0.5
+    R = min(renderer.w, renderer.h) * 0.30          # 环半径：在准星外圈、不挡视野
+    thick = max(6.0, 11.0 * u)
+    span = 0.34                                    # 弧的半角（弧度），整段约 39°
+    cyaw, syaw = math.cos(cam.yaw), math.sin(cam.yaw)
+    for p in pings:
+        sx, sy, life = p[0], p[1], p[2]
+        dx, dy = sx - cam.x, sy - cam.y
+        fwd = dx * cyaw + dy * syaw                 # 前方分量 → 屏幕上方
+        right = -dx * syaw + dy * cyaw             # 右方分量 → 屏幕右方
+        phi = math.atan2(right, fwd)               # 0=正前(上)，顺时针为正
+        theta = phi - math.pi / 2.0                # 转成 pygame 弧角（0=+x，顺时针）
+        a = clamp(life / C.ATTACK_PING_LIFE, 0.0, 1.0)
+        alpha = int(70 + 170 * a)                  # 越新越亮
+        d = int(R + thick) + 4
+        layer = pygame.Surface((d * 2, d * 2), pygame.SRCALPHA)
+        pygame.draw.arc(
+            layer, (255, 48, 48, alpha),
+            pygame.Rect(0, 0, d * 2, d * 2),
+            theta - span, theta + span, max(2, int(thick)))
+        surf.blit(layer, (int(cx - d), int(cy - d)))
+
+
 def draw_ammo(surf, renderer, ammo: int, mag: int, reload_t: float):
     """右下角武器上方的弹药读数（仅 3v3 对战调用）。
 

@@ -27,7 +27,7 @@ import config as C  # noqa: E402
 import hud  # noqa: E402
 from audio import Audio  # noqa: E402
 from effects import Effects  # noqa: E402
-from ai import ammo_of, start_reload  # noqa: E402
+from ai import ammo_of, start_reload, tick_reload  # noqa: E402
 from engine import Camera, Renderer, build_arena, cast_ray, cast_ray_block  # noqa: E402
 from match import Match  # noqa: E402
 from nades import SmokeField  # noqa: E402
@@ -624,6 +624,7 @@ class Game:
                     w = MATCH_WEAPONS.get(self.client_weapon)
                     if w:
                         self.player.weapon = w
+                    self.player.ads = False   # 切枪即退镜
                     self.audio.play("spawn")
                 return
             if key == pygame.K_g:
@@ -669,6 +670,7 @@ class Game:
                     if self.match.player_swap(BUY_ORDER[idx]):
                         self.player.weapon = self.match.player_agent.weapon
                         self.player.bolt = 0.0
+                        self.player.ads = False   # 切枪即退镜，避免开镜减速残留
                         self.audio.play("spawn")
                 return
             if key == pygame.K_6:
@@ -684,6 +686,7 @@ class Game:
                         if self.match.player_buy(w):
                             self.player.weapon = self.match.player_agent.weapon
                             self.player.bolt = 0.0
+                            self.player.ads = False   # 切枪即退镜，避免开镜减速残留
                             self.audio.play("spawn")
                         else:
                             self.fx.popup(self.renderer.w * 0.5, self.renderer.h * 0.60,
@@ -706,6 +709,7 @@ class Game:
                 if self.match.player_cycle():
                     self.player.weapon = self.match.player_agent.weapon
                     self.player.bolt = 0.0
+                    self.player.ads = False   # 切枪即退镜，避免开镜减速残留
                     self.audio.play("spawn")
                 return
             # R：换弹（2s）。打完整场后的重开仍走下面原来的 R 分支
@@ -980,6 +984,10 @@ class Game:
         was_dead = m.player_dead
         if not m.player_dead:
             self.player.update_move(dt, self.cam, self.gmap, keys)
+            # 本地玩家的换弹计时一直没人推进！只有 AI 在 update_agent 里、
+            # 联网真人在 _apply_human 里掉了 tick_reload；单机玩家漏了这一步，
+            # 弹匣打空后就会永远卡在"换弹中"开不了火（Bug 1）。
+            tick_reload(self.match.player_agent, dt)
         self.player.update_jump(dt)
         # 阵亡观战队友时镜头贴队友的眼睛，不带玩家自己的跳跃高度
         self.cam.z = ((self.player.z if not m.player_dead else 0.0)
@@ -1272,6 +1280,9 @@ class Game:
                 hud.draw_scope(surf, r, self.player)   # 开镜：圆形镜框 + 十字线，盖住普通准星
             else:
                 hud.draw_crosshair(surf, r, self.player, self.crosshair)
+            # 被攻击提示：屏幕中央红色环形弧，指向子弹来源（与小地图同朝向）
+            if self.match is not None and self.match.attack_pings:
+                hud.draw_attack_indicator(surf, r, self.cam, self.match.attack_pings)
             hud.draw_smoke_slot(surf, r, self)
         self.fx.draw_hud_fx(surf, hud.font(20), r.w * 0.5, r.h * 0.5)
 

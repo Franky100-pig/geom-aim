@@ -85,6 +85,11 @@ class Match:
         self.player_hp = C.PLAYER_HP   # 玩家血量只在这里存一份，HUD 和 AI 都读它
         self.player_dead = False
         self.spectate: Agent | None = None
+        # 被攻击提示：每挨一发子弹记录一条 (来源x, 来源y, 剩余寿命)，
+        # HUD 据此在屏幕中央画指向攻击方向的红色环形弧。寿命由 _tick_attack_pings 递减。
+        self.attack_pings: list = []
+
+        # 联机：真人（含主机）的输入都塞进这个字典，由 _drive_humans 每帧驱动。
 
         # 联机：真人（含主机）的输入都塞进这个字典，由 _drive_humans 每帧驱动。
         # key = Agent 对象，value = 输入字典（见 net.py / Game 的 _pack_input）。
@@ -526,7 +531,16 @@ class Match:
         self._select(a, key)
         return True
 
+    def _tick_attack_pings(self, dt: float):
+        """衰减被攻击提示的剩余寿命，过期的删除。每帧由 update() 调用。"""
+        if not self.attack_pings:
+            return
+        for p in self.attack_pings:
+            p[2] -= dt
+        self.attack_pings = [p for p in self.attack_pings if p[2] > 0.0]
+
     def update(self, dt: float):
+        self._tick_attack_pings(dt)
         if self.mode == "score":
             self._update_score(dt)
             return
@@ -776,6 +790,12 @@ class Match:
         dmg = w.damage * (w.headshot_mul if head else 1.0)
 
         if tgt.is_player:
+            # 被攻击提示：记下子弹来源，HUD 会在屏幕中央亮起指向该方向的红色环形弧。
+            # 用 shooter 的世界坐标（开火者位置），渲染时再相对镜头朝向算出屏幕角度。
+            if shooter is not None:
+                self.attack_pings.append([shooter.x, shooter.y, C.ATTACK_PING_LIFE])
+                if len(self.attack_pings) > 6:       # 同时最多 6 个，避免列表无限增长
+                    self.attack_pings.pop(0)
             # 玩家的血量存在 Match 上，影子 Agent 只是给 AI 当瞄准目标用的
             self.player_hp -= dmg
             tgt.hp = self.player_hp
