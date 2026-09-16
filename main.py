@@ -1280,6 +1280,9 @@ class Game:
                 hud.draw_scope(surf, r, self.player)   # 开镜：圆形镜框 + 十字线，盖住普通准星
             else:
                 hud.draw_crosshair(surf, r, self.player, self.crosshair)
+            # 被攻击提示：屏幕中央红色环形弧，指向子弹来源（与小地图同朝向）
+            if self.match is not None and self.match.attack_pings:
+                hud.draw_attack_indicator(surf, r, self.cam, self.match.attack_pings)
             hud.draw_smoke_slot(surf, r, self)
         self.fx.draw_hud_fx(surf, hud.font(20), r.w * 0.5, r.h * 0.5)
 
