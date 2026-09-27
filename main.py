@@ -980,6 +980,14 @@ class Game:
             self._snap_to_spawn()
             self.smoke_left = 0                   # 对战里烟雾弹改经济购买，每回合重新买
             self.smokes.clear()                   # 上回合的烟不留到这回合
+            # 关键：每回合开局把本地玩家的武器同步回 Match 的默认武器
+            # （刀 / 手枪），否则会一直顺延上一把（Bug 1：买了狙击赢了之后
+            # 下一回合自动带着狙击，因为 self.player.weapon 只在 start_match
+            # 设过一次，之后每帧又被推回 player_agent.weapon）。
+            self.player.weapon = m.player_agent.weapon
+            self.player.bolt = 0.0
+            self.player.firing = False
+            self.player.ads = False
 
         was_dead = m.player_dead
         if not m.player_dead:
