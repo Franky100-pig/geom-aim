@@ -20,6 +20,7 @@ class Effects:
         self.hitmark = 0.0
         self.hitmark_head = False
         self.shake = 0.0
+        self.slash = 0.0            # 近战挥砍特效计时
 
     # -- 生成 ----------------------------------------------------------
 
@@ -35,6 +36,9 @@ class Effects:
 
     def add_shake(self, amount: float):
         self.shake = min(14.0, self.shake + amount)
+
+    def add_slash(self):
+        self.slash = 0.14
 
     def burst(self, x, y, n, color, speed=260.0, spread=1.0, size=4.0, gravity=620.0):
         for _ in range(n):
@@ -75,6 +79,7 @@ class Effects:
 
         self.muzzle = max(0.0, self.muzzle - dt)
         self.hitmark = max(0.0, self.hitmark - dt)
+        self.slash = max(0.0, self.slash - dt)
         self.shake *= max(0.0, 1.0 - 11.0 * dt)
 
     # -- 绘制 ----------------------------------------------------------
@@ -110,6 +115,19 @@ class Effects:
                     surf, col,
                     (cx + sx * r, cy + sy * r),
                     (cx + sx * (r + 7), cy + sy * (r + 7)), 2)
+
+        if self.slash > 0:
+            a = clamp(self.slash / 0.14, 0.0, 1.0)
+            col = (int(232 * a), int(240 * a), int(255 * a))
+            ln = (42 + (1.0 - a) * 26)
+            ang = -0.9 - (1.0 - a) * 0.5      # 由左上往右下扫
+            for off in (-0.12, 0.12):
+                aa = ang + off
+                pygame.draw.line(
+                    surf, col,
+                    (cx - math.cos(aa) * ln, cy - math.sin(aa) * ln),
+                    (cx + math.cos(aa) * ln, cy + math.sin(aa) * ln),
+                    max(2, int(3 * a)))
 
     def shake_offset(self):
         if self.shake < 0.05:

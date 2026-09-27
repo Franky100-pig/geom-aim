@@ -80,6 +80,12 @@ class Audio:
         self.sounds["spawn"] = self._pack(
             np.sin(2 * np.pi * 620 * t) * self._env(n, 90.0), 0.10)
 
+        # 挥刀：短促气声（带通噪声快速衰减）—— 和枪声区分开
+        n = int(sr * 0.10)
+        sw = self._noise(n, 2) * self._env(n, 95.0)
+        sw *= (1.0 - np.abs(np.arange(n) / n - 0.5) * 1.4)  # 中段最响、首尾弱
+        self.sounds["slice"] = self._pack(sw, 0.22)
+
     # -- 播放 ----------------------------------------------------------
 
     def play(self, name: str):

@@ -33,6 +33,7 @@ class Weapon:
     move_spray: float       # 移动中额外扩散
     kill_reward: int        # 击杀金钱奖励
     mag: int = 30           # 弹匣容量（发）；换弹一次补满，耗时 C.RELOAD_TIME
+    melee: bool = False     # 近战武器（刀）：不耗弹、不换弹，贴脸挥砍
 
 
 # ---------------------------------------------------------------- 练习模式
@@ -63,7 +64,21 @@ def practice_sniper() -> Weapon:
 
 # 平衡基准：血量 100、无护甲，所以爆头基本都是一枪带走，逼你抬头线。
 # 价格/射击奖励照 CS 的量级来，方便直接理解。
+#
+# 刀（knife）：免费、永远在库存里、没买任何枪时的默认武器。近战不耗弹、不换弹，
+# 贴脸（C.KNIFE_RANGE 内、朝向大致对准）挥砍，2 下带走一个满血敌人。
 MATCH_WEAPONS: dict[str, Weapon] = {
+    "knife": Weapon(
+        key="knife", name="刀", price=0,
+        damage=50.0, headshot_mul=2.0,          # 身体 50（两下）、爆头 100（一下）
+        fire_interval=0.45, auto=False,
+        bolt_time=0.0, zoom=1.0,
+        recoil_px=0.0, recoil_yaw_px=0.0,
+        spray_first=0.0, spray_per_shot=0.0,
+        spray_max=0.0, move_spray=0.0,
+        kill_reward=150,
+        mag=0, melee=True,
+    ),
     "pistol": Weapon(
         key="pistol", name="手枪", price=300,
         damage=35.0, headshot_mul=4.0,          # 爆头 140，一枪秒

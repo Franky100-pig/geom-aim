@@ -394,12 +394,13 @@ class Match:
             a.invuln = 0.0
             a.crouch = False
             a.h = C.BOT_H
-            # 每回合重置武器：只带免费手枪上场，买过的枪不带进下一回合
-            # （CS 式经济局）。同一回合内买的多把枪用 C 键来回切。
-            a.loadout = ["pistol"]
+            # 每回合重置武器：只带免费刀上场，买过的枪（含手枪）不带进下一回合
+            # （CS 式经济局）。同一回合内买的多把枪用 C 键来回切。刀永远在库存里，
+            # 没买任何枪时就是默认近战武器。
+            a.loadout = ["knife"]
             a.w_idx = 0
-            a.weapon = MATCH_WEAPONS["pistol"]
-            a.mags = {"pistol": MATCH_WEAPONS["pistol"].mag}
+            a.weapon = MATCH_WEAPONS["knife"]
+            a.mags = {"knife": 0}
             a.reload_t = 0.0
 
         self._place_all()
@@ -703,15 +704,16 @@ class Match:
     def _ai_buy(self, a):
         """AI 买枪 + 买烟。队友和敌人都用同一套，所以两边都会扔烟。
 
-        每回合库存清空回手枪，所以 AI 按资金重新买主武器；
-        实在买不起就保留开局的手枪。
+        每回合库存清空回刀，所以 AI 按资金重新买主武器；
+        实在买不起就保留开局免费的刀（近战）。
         """
         if a.money >= MATCH_WEAPONS["rifle"].price:
             self._buy(a, "rifle")
-        elif ("smg" not in a.loadout and self.rng.random() < 0.65
-              and a.money >= MATCH_WEAPONS["smg"].price):
+        elif a.money >= MATCH_WEAPONS["smg"].price:
             self._buy(a, "smg")
-        # 都买不起就保留开局的手枪（无需 rebuy）
+        elif a.money >= MATCH_WEAPONS["pistol"].price:
+            self._buy(a, "pistol")
+        # 连手枪都买不起就保留开局免费的刀（无需 rebuy）
 
         # 烟雾弹：有钱就买，最多带 2 颗（避免囤货把经济榨干），
         # 这样无论队友（队0）还是敌人（队1）都会在对战里真正用烟。

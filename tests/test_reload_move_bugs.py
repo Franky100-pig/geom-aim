@@ -76,6 +76,10 @@ def test_local_player_reload_ticks():
     m = g.match
     pa = m.player_agent
 
+    # 换弹逻辑是"枪"专属，测试显式给一把有弹匣的手枪（默认已是近战刀 mag=0）。
+    pa.weapon = MATCH_WEAPONS["pistol"]
+    pa.mags = {"pistol": MATCH_WEAPONS["pistol"].mag}
+
     # 清掉敌人，避免 AI 在测试窗口内打死玩家（死了就不走 tick_reload 分支）。
     # 这里只验证"换弹计时被推进"这一条，胜负逻辑不是本测试对象。
     m.agents = [pa]
@@ -103,6 +107,11 @@ def test_empty_triggers_reload_then_recovers():
     g.start_match()
     m = g.match
     pa = m.player_agent
+
+    # 换弹逻辑是"枪"专属，测试显式给一把有弹匣的手枪（默认已是近战刀 mag=0）。
+    pa.weapon = MATCH_WEAPONS["pistol"]
+    pa.mags = {"pistol": MATCH_WEAPONS["pistol"].mag}
+
     m.agents = [pa]
 
     pa.mags[pa.weapon.key] = 0

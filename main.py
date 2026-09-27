@@ -1075,6 +1075,8 @@ class Game:
         if m is None or m.mode != "match":
             return True
         pa = m.player_agent
+        if pa.weapon.melee:
+            return True                        # 近战不耗弹、不换弹，随时能挥
         if pa.reload_t > 0:
             return False
         if ammo_of(pa) <= 0:
@@ -1096,6 +1098,9 @@ class Game:
 
     def _do_shot(self):
         p, cam, r = self.player, self.cam, self.renderer
+        if p.weapon.melee:
+            self._do_melee()
+            return
         self.fx.add_muzzle()
         self.fx.add_shake(2.4)
         self.audio.play("shot")
@@ -1157,6 +1162,49 @@ class Game:
             self.on_hit(best, best_d, headshot, ix, iy)
         else:
             self.on_miss(ix, iy)
+
+    def _do_melee(self):
+        """近战（刀）：贴脸挥砍。命中判定 = 距离 + 朝向 + 视线（与 AI 那份一致）。"""
+        p, cam, r = self.player, self.cam, self.renderer
+        self.fx.add_slash()
+        self.fx.add_shake(1.2)
+        self.audio.play("slice")
+        if self.match is not None:
+            self.match.stats["shots"] += 1
+
+        dx, dy = cam.dir()
+        pux, puy = cam.plane_unit()
+        eye_z = C.EYE_HEIGHT + cam.z
+        pool = self.match.enemies() if self.match is not None else self.range.targets
+        best = None
+        best_d = 1e9
+        for t in pool:
+            rx, ry = t.x - cam.x, t.y - cam.y
+            dist = math.hypot(rx, ry)
+            if dist > C.KNIFE_RANGE:
+                continue
+            if dist < 1e-3:               # 几乎贴脸：直接算命中
+                best, best_d = t, dist
+                continue
+            depth = rx * dx + ry * dy      # 前方分量
+            if depth <= 0:
+                continue                  # 在背后，砍不到
+            if depth < C.KNIFE_CONE * dist:
+                continue                  # 没对准（朝向偏差过大）
+            lateral = rx * pux + ry * puy
+            if abs(lateral) > t.w * 0.5 + 0.40:
+                continue                  # 偏出人形轮廓
+            gz = getattr(t, "ground_z", 0.0)
+            if not self.gmap.clear_line_h(cam.x, cam.y, eye_z, t.x, t.y, t.h, g1=gz):
+                continue                  # 被墙/箱挡住
+            if dist < best_d:
+                best, best_d = t, dist
+
+        cx, cy = r.w * 0.5, r.h * 0.5
+        if best is not None:
+            self.on_hit(best, best_d, False, cx, cy)
+        else:
+            self.on_miss(cx, cy)
 
     def on_hit(self, t, depth, headshot, ix, iy):
         if self.match is not None:
@@ -1279,7 +1327,8 @@ class Game:
         hud.draw_weapon(surf, r, self.player)
         if self.match is not None and self.match.mode == "match":
             pa = self.match.player_agent
-            hud.draw_ammo(surf, r, ammo_of(pa), pa.weapon.mag, pa.reload_t)
+            hud.draw_ammo(surf, r, ammo_of(pa), pa.weapon.mag, pa.reload_t,
+                         melee=pa.weapon.melee)
 
         scoped = self.player.ads and (self.match is not None
                                       or self.range.mode == "sniper")

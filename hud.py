@@ -298,14 +298,18 @@ def draw_attack_indicator(surf, renderer, cam, pings):
         surf.blit(layer, (int(cx - d), int(cy - d)))
 
 
-def draw_ammo(surf, renderer, ammo: int, mag: int, reload_t: float):
+def draw_ammo(surf, renderer, ammo: int, mag: int, reload_t: float, melee: bool = False):
     """右下角武器上方的弹药读数（仅 3v3 对战调用）。
 
-    换弹时显示"换弹中…"+ 进度条；弹匣打空数字变警示色。
+    换弹时显示"换弹中…"+ 进度条；弹匣打空数字变警示色。近战武器（刀）
+    不耗弹，显示"近战"而不是数字。
     """
     u = renderer.h / 720.0
     x = int(renderer.w * 0.72)
     y = int(renderer.h * 0.78)
+    if melee:
+        text(surf, "近战 · 刀", 20, (x, y), C.C_TEXT, anchor="rm")
+        return
     if reload_t > 0.0:
         text(surf, "换弹中…", 17, (x, y), C.C_ACCENT, anchor="rm")
         k = clamp(1.0 - reload_t / C.RELOAD_TIME, 0.0, 1.0)
@@ -319,7 +323,7 @@ def draw_ammo(surf, renderer, ammo: int, mag: int, reload_t: float):
 
 
 def draw_weapon(surf, renderer, player):
-    """右下角的几何枪，返回枪口屏幕坐标。"""
+    """右下角的几何枪，返回枪口屏幕坐标。近战武器（刀）画一把刀。"""
     u = renderer.h / 720.0
     w, h = renderer.w, renderer.h
     bob_x = math.sin(player.bob) * 7.0 * u
@@ -327,6 +331,24 @@ def draw_weapon(surf, renderer, player):
     kick = player.kick
     ox = w * 0.72 + bob_x + kick * 10.0 * u
     oy = h * 1.02 + bob_y + kick * 26.0 * u
+
+    if player.weapon.melee:
+        # —— 刀：刀身 + 刀柄，挥砍时随 kick 微微抬起 ——
+        blade = (193, 200, 214)
+        edge = (232, 240, 255)
+        handle = (60, 50, 66)
+        # 刀柄（斜放）
+        pygame.draw.polygon(surf, handle, [
+            (ox - 30 * u, oy - 6 * u), (ox - 6 * u, oy - 22 * u),
+            (ox + 2 * u, oy - 14 * u), (ox - 22 * u, oy + 2 * u)])
+        # 刀身（细长三角）
+        pygame.draw.polygon(surf, blade, [
+            (ox - 6 * u, oy - 22 * u), (ox + 96 * u, oy - 64 * u),
+            (ox + 104 * u, oy - 54 * u), (ox + 2 * u, oy - 14 * u)])
+        # 刀刃高光
+        pygame.draw.line(surf, edge, (ox - 4 * u, oy - 20 * u),
+                         (ox + 98 * u, oy - 59 * u), max(1, int(2 * u)))
+        return (ox + 60 * u, oy - 40 * u)
 
     def P(pts, col):
         pygame.draw.polygon(surf, col,
@@ -570,7 +592,8 @@ def _draw_buy_menu(surf, renderer, m):
     px, py = (w - pw) * 0.5, h - ph - 60
     pygame.draw.rect(surf, C.C_PANEL, (px, py, pw, ph))
     pygame.draw.rect(surf, C.C_ACCENT, (px, py, pw, ph), 2)
-    text(surf, "买枪（1-5）  ·  6 烟雾弹", 18, (px + 18, py + 12), C.C_ACCENT)
+    text(surf, "买枪（1-5）  ·  6 烟雾弹   ·   没买枪 = 刀", 18,
+         (px + 18, py + 12), C.C_ACCENT)
     text(surf, f"$ {m.player_money}", 18, (px + pw - 18, py + 12), C.C_TEXT, anchor="tr")
 
     # 库存：买过的枪一直留着，所以菜单要标出来哪些能直接切

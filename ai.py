@@ -445,6 +445,27 @@ def _try_fire(m, a, dt: float, rng: random.Random, tune: dict):
     if tgt is None or not tgt.alive:
         return
 
+    dist = math.hypot(tgt.x - a.x, tgt.y - a.y)
+
+    # —— 近战（刀）：贴脸才挥砍，不耗弹、不换弹 ——
+    if a.weapon.melee:
+        if dist > C.KNIFE_RANGE:
+            return                      # 太远不挥刀（AI 没有专门的突进逻辑）
+        eye_z = a.ground_z + a.h * 0.5
+        if not m.gmap.clear_line_h(a.x, a.y, eye_z, tgt.x, tgt.y, tgt.h,
+                                   g0=a.ground_z, g1=tgt.ground_z):
+            return
+        if m.smokes.blocks(a.x, a.y, tgt.x, tgt.y):
+            return
+        # 朝向：刀够不到背后的人（depth/dist 太小 = 没对准）
+        dxr, dyr = math.cos(a.yaw), math.sin(a.yaw)
+        if dist > 1e-3 and (tgt.x - a.x) * dxr + (tgt.y - a.y) * dyr < C.KNIFE_CONE * dist:
+            return
+        a.muzzle = 0.12
+        m.apply_damage(a, tgt, False)
+        a.fire_cd = a.weapon.fire_interval
+        return
+
     # 弹药（仅 3v3 对战）：换弹中打不了；打空自动换弹
     if m.mode == "match":
         if a.reload_t > 0:
@@ -453,7 +474,6 @@ def _try_fire(m, a, dt: float, rng: random.Random, tune: dict):
             start_reload(a)
             return
 
-    dist = math.hypot(tgt.x - a.x, tgt.y - a.y)
     eye_z = a.ground_z + a.h * 0.5
     chest = tgt.ground_z + tgt.h * 0.62         # 瞄胸口，和命中判定一致
     slope = (chest - eye_z) / max(dist, 1e-3)
