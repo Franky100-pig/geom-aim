@@ -35,6 +35,7 @@ from net import Client, Host  # noqa: E402
 from player import Player  # noqa: E402
 from targets import MODE_HINT, MODE_KEYS, MODE_NAMES, Range  # noqa: E402
 from weapons import BUY_ORDER, MATCH_WEAPONS  # noqa: E402
+from stats import LocalStatsStore, Session  # noqa: E402
 
 DIFF_ORDER = ("easy", "normal", "hard", "expert")
 DIFF_NAMES = {"easy": "简单", "normal": "普通", "hard": "困难", "expert": "专家"}
@@ -115,6 +116,16 @@ class Game:
         self.hint_hold = 5.0
         self.fps_smooth = 60.0
 
+        # —— 战绩数据层（Phase 1：本地 SQLite，离线优先）——
+        # 练习开火/爆头数另记（对战模式走 match.stats，这里只补练习口径）；
+        # session_start 记本局起点，结束/退出时算时长；stats_store 落库。
+        self.shots = 0
+        self.headshots = 0
+        self.session_start = 0.0
+        self._last_match_over = False
+        self.stats_store = LocalStatsStore()
+        self.history_scroll = 0          # 历史面板滚动偏移（行）
+
         # 标题界面：不抓鼠标（要看得到光标、能选），背后用 botz 当静态预览背景
         self._grab(False)
         self.range.set_mode("botz", self.cam)
@@ -143,6 +154,7 @@ class Game:
         self.hit_count = 0
         self.hint_alpha = 1.0
         self.hint_hold = 5.0
+        self._begin_session()
         self.state = "play"
         self._grab(True)
 
@@ -166,6 +178,7 @@ class Game:
         self.player.recoil_yaw_px = 0.0
         self._last_round = 0          # 让首帧把镜头摆回我方出生点
         self._snap_to_spawn()
+        self._begin_session()
         self.state = "play"
         self._grab(True)
 
@@ -175,6 +188,42 @@ class Game:
         self._spec_agent = None
         self._spec_blend = 1.0
         self._spec_yaw0 = 0.0
+
+    def _begin_session(self):
+        """新一轮 / 练习开始时：清战绩计数器、起算时长、复位对战结束标记。"""
+        self.shots = 0
+        self.headshots = 0
+        self._last_match_over = False
+        self.session_start = time.time()
+
+    def _record_match_session(self, m: Match):
+        """对战 / 积分赛结束时落库一条战绩（mode + kills/deaths/shots/...）。"""
+        s = m.stats
+        self.stats_store.record(Session(
+            mode=m.mode,
+            shots=s["shots"], hits=s["hits"], headshots=s["headshots"],
+            kills=s["kills"], deaths=s["deaths"], score=0,
+            duration_s=max(0.0, time.time() - self.session_start),
+            created_at=time.time(),
+        ))
+
+    def _maybe_record_match(self, m: Match):
+        """对战 / 积分赛只在"刚结束"那一帧落库一次，避免每帧重复写。"""
+        if m.match_over and not self._last_match_over:
+            self._record_match_session(m)
+            self._last_match_over = True
+
+    def _record_practice_session(self):
+        """练习模式离开时落库（只记命中类，kills/deaths 无意义）。"""
+        if self.shots <= 0 and self.hit_count <= 0:
+            return
+        self.stats_store.record(Session(
+            mode=self.range.mode,
+            shots=self.shots, hits=self.hit_count, headshots=self.headshots,
+            kills=0, deaths=0, score=self.score,
+            duration_s=max(0.0, time.time() - self.session_start),
+            created_at=time.time(),
+        ))
 
     def _snap_to_spawn(self):
         """把玩家镜头摆回我方出生点、朝向敌方出生点。
@@ -217,6 +266,7 @@ class Game:
         self.player.recoil_yaw_px = 0.0
         self._player_was_dead = False
         self._snap_to_spawn()
+        self._begin_session()
         self.state = "play"
         self._grab(True)
 
@@ -369,6 +419,11 @@ class Game:
         所以这里必须把大地图重建回来，否则回到标题会停在上一局的小地图上。
         玩家、连击、烟雾、缩放全部归位，等效于刚启动程序时的标题状态。
         """
+        # 离开练习模式时落库一条战绩（对战模式由 match_over 在更新循环里落过了）
+        was_practice = self.match is None
+        if was_practice:
+            self._record_practice_session()
+
         self._close_net()
         self.match = None
         self.gmap = build_arena(C.ARENA_TILES_X, C.ARENA_TILES_Y,
@@ -389,6 +444,9 @@ class Game:
         self.best_combo = 0
         self.combo_timer = 0.0
         self.hit_count = 0
+        self.shots = 0
+        self.headshots = 0
+        self.session_start = 0.0
         self.state = "title"
         self._grab(False)
 
@@ -602,8 +660,19 @@ class Game:
             p.cooldown = 0.0
 
     def on_key(self, key):
-        # ---------- 任意状态：H 返回标题（练习/对战/暂停菜单都行） ----------
-        if key == pygame.K_h:
+        # ---------- 战绩历史面板：ESC / H / 6 返回标题；↑↓/WS 滚动 ----------
+        if self.state == "history":
+            if key in (pygame.K_ESCAPE, pygame.K_h, pygame.K_6):
+                self.state = "title"
+                self._grab(False)
+            elif key in (pygame.K_UP, pygame.K_w):
+                self.history_scroll = max(0, self.history_scroll - 1)
+            elif key in (pygame.K_DOWN, pygame.K_s):
+                self.history_scroll += 1          # 上限在 draw 里夹紧
+            return
+
+        # ---------- 任意状态：H 返回标题（练习/对战/暂停菜单都行；标题/历史除外） ----------
+        if key == pygame.K_h and self.state not in ("title", "history"):
             self.to_title()
             return
 
@@ -653,6 +722,11 @@ class Game:
             elif key == pygame.K_5:
                 self.state = "join_input"
                 self.join_text = ""
+                self._grab(False)
+            elif key in (pygame.K_6, pygame.K_h):
+                # 打开本地战绩历史面板（离线优先，无需登录）
+                self.history_scroll = 0
+                self.state = "history"
                 self._grab(False)
             elif key in (pygame.K_LEFTBRACKET, pygame.K_RIGHTBRACKET):
                 d = -1 if key == pygame.K_LEFTBRACKET else 1
@@ -968,6 +1042,9 @@ class Game:
             self.smoke_cd = max(0.0, self.smoke_cd - dt)
         self.fx.update(dt)
 
+        # 积分赛结束那一帧落库一条战绩（只记一次）
+        self._maybe_record_match(m)
+
     # ------------------------------------------------------------ 对战更新
 
     def _update_match(self, dt: float):
@@ -1042,6 +1119,9 @@ class Game:
 
         self.fx.update(dt)
 
+        # 对战结束那一帧落库一条战绩（只记一次）
+        self._maybe_record_match(m)
+
     # ------------------------------------------------------------ 投掷物
 
     def _throw_smoke(self):
@@ -1109,6 +1189,9 @@ class Game:
             if self.match.mode == "match":
                 pa = self.match.player_agent
                 pa.mags[pa.weapon.key] = ammo_of(pa) - 1
+        else:
+            # 练习模式单独记开火数（用来算命中率 / 爆头率）
+            self.shots += 1
 
         dx, dy = cam.dir()
         pux, puy = cam.plane_unit()
@@ -1218,6 +1301,8 @@ class Game:
         self.best_combo = max(self.best_combo, self.combo)
         self.combo_timer = C.COMBO_TIMEOUT
         self.hit_count += 1
+        if headshot:
+            self.headshots += 1
         self.range.register_hit()
 
         mult = self.combo_multiplier()
@@ -1369,6 +1454,8 @@ class Game:
             self._draw_lobby(surf)
         elif self.state == "join_input":
             self._draw_join(surf)
+        elif self.state == "history":
+            hud.draw_history(surf, r, self)
 
         pygame.display.flip()
 

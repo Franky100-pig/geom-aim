@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import math
+import time
 
 import pygame
 
 import config as C
+import stats
 from engine import clamp, lerp_rgb
 from targets import MODE_KEYS, MODE_NAMES
 
@@ -787,16 +789,110 @@ def draw_title(surf, renderer, game):
          C.C_TEXT, anchor="cm")
     text(surf, "5    加入局域网房间（输入主机 IP 或 .local）", 22, (w * 0.5, h * 0.64),
          C.C_TEXT, anchor="cm")
+    text(surf, "6    查看战绩历史（命中率 / 爆头率 / K·D）", 22, (w * 0.5, h * 0.67),
+         C.C_ACCENT, anchor="cm")
 
     diff = game.difficulty
     text(surf, f"[  ]    AI 难度： {DIFF_LABEL.get(diff, diff)}", 18,
-         (w * 0.5, h * 0.72), C.C_TEXT, anchor="cm")
+         (w * 0.5, h * 0.75), C.C_TEXT, anchor="cm")
     text(surf, "WASD 移动 · 鼠标 转视角 · 左键 开火 · 右键 开镜 · 空格 跳 · E 蹲 · G 烟雾弹 · ESC 菜单",
-         13, (w * 0.5, h * 0.82), C.C_DIM, anchor="cm")
-    text(surf, "H 返回主菜单 · Q 退出", 15, (w * 0.5, h * 0.86), C.C_DIM, anchor="cm")
+         13, (w * 0.5, h * 0.83), C.C_DIM, anchor="cm")
+    text(surf, "H 返回主菜单 · 6 战绩 · Q 退出", 15, (w * 0.5, h * 0.87), C.C_DIM, anchor="cm")
 
 
 DIFF_LABEL = {"easy": "简单", "normal": "普通", "hard": "困难", "expert": "专家"}
+
+
+# ---------------------------------------------------------------- 战绩历史
+
+MODE_LABEL = {
+    "botz": "靶场 Botz", "reflex": "Reflex", "tracking": "Tracking",
+    "peek": "Peek", "sniper": "狙击练习", "match": "3v3 对战", "score": "5v5 积分",
+}
+
+
+def _fmt_metric(val: float | None, pct: bool = True) -> str:
+    if val is None:
+        return "—"
+    return f"{val * 100:.1f}%" if pct else f"{val:.2f}"
+
+
+def draw_history(surf, renderer, game):
+    """本地战绩历史面板（离线优先；无需登录即可查看）。"""
+    w, h = renderer.w, renderer.h
+    veil = pygame.Surface((w, h), pygame.SRCALPHA)
+    veil.fill((6, 9, 15, 225))
+    surf.blit(veil, (0, 0))
+
+    pad = max(28, int(w * 0.06))
+    text(surf, "战绩历史", 40, (w * 0.5, h * 0.07), C.C_ACCENT, anchor="cm")
+    text(surf, "本地记录 · 离线优先（云同步为后续可选项）", 14,
+         (w * 0.5, h * 0.125), C.C_DIM, anchor="cm")
+
+    rows = game.stats_store.recent(limit=200)
+    if not rows:
+        text(surf, "还没有战绩，先去打一局吧", 22, (w * 0.5, h * 0.5),
+             C.C_DIM, anchor="cm")
+        text(surf, "ESC / H / 6  返回主菜单", 16, (w * 0.5, h * 0.9),
+             C.C_DIM, anchor="cm")
+        return
+
+    # —— 顶部汇总 ——
+    agg = stats.aggregate(rows)
+    acc = _fmt_metric(agg["accuracy"])
+    hs = _fmt_metric(agg["headshot_rate"])
+    kd = _fmt_metric(agg["kd"], pct=False)
+    summary = (f"共 {agg['sessions']} 局   命中率 {acc}   爆头率 {hs}"
+               f"   总击杀 {agg['kills']} / 死亡 {agg['deaths']}   K/D {kd}")
+    text(surf, summary, 16, (w * 0.5, h * 0.175), C.C_TEXT, anchor="cm")
+
+    # —— 列表（可滚动）——
+    col_x = pad
+    right = w - pad
+    header_y = h * 0.23
+    text(surf, "#", 16, (col_x, header_y), C.C_DIM, anchor="ml")
+    text(surf, "时间", 16, (col_x + 40, header_y), C.C_DIM, anchor="ml")
+    text(surf, "模式", 16, (col_x + 220, header_y), C.C_DIM, anchor="ml")
+    text(surf, "命中率", 16, (col_x + 360, header_y), C.C_DIM, anchor="ml")
+    text(surf, "爆头率", 16, (col_x + 470, header_y), C.C_DIM, anchor="ml")
+    text(surf, "K/D", 16, (col_x + 580, header_y), C.C_DIM, anchor="ml")
+    text(surf, "得分/时长", 16, (right, header_y), C.C_DIM, anchor="mr")
+
+    row_h = 30
+    first = h * 0.27
+    visible = int((h * 0.88 - first) / row_h)
+    max_scroll = max(0, len(rows) - visible)
+    game.history_scroll = clamp(game.history_scroll, 0, max_scroll)
+    shown = rows[game.history_scroll: game.history_scroll + visible]
+
+    for i, r in enumerate(shown):
+        y = first + i * row_h
+        idx = game.history_scroll + i + 1
+        t = r.created_at
+        tstr = (time.strftime("%m-%d %H:%M", time.localtime(t))
+                if t else "—")
+        is_match = r.kills > 0 or r.deaths > 0
+        kd = _fmt_metric(r.kd(), pct=False)
+        if is_match:
+            tail = f"K {r.kills} / D {r.deaths} / {r.duration_s:.0f}s"
+        else:
+            tail = f"得分 {r.score} / {r.duration_s:.0f}s"
+        text(surf, f"{idx:>3}", 15, (col_x, y), C.C_DIM, anchor="ml")
+        text(surf, tstr, 15, (col_x + 40, y), C.C_TEXT, anchor="ml")
+        text(surf, MODE_LABEL.get(r.mode, r.mode), 15,
+             (col_x + 220, y), C.C_ACCENT, anchor="ml")
+        text(surf, _fmt_metric(r.accuracy()), 15, (col_x + 360, y),
+             C.C_GOOD, anchor="ml")
+        text(surf, _fmt_metric(r.headshot_rate()), 15, (col_x + 470, y),
+             C.C_TEXT, anchor="ml")
+        text(surf, kd, 15, (col_x + 580, y), C.C_TEXT, anchor="ml")
+        text(surf, tail, 15, (right, y), C.C_DIM, anchor="mr")
+
+    hint = "ESC / H / 6  返回主菜单"
+    if max_scroll > 0:
+        hint += f"    ↑↓ / W S  滚动（{game.history_scroll + 1}"
+        hint += f"–{game.history_scroll + len(shown)} / {len(rows)}）"
+    text(surf, hint, 15, (w * 0.5, h * 0.93), C.C_DIM, anchor="cm")
 
 
 # ---------------------------------------------------------------- 菜单
