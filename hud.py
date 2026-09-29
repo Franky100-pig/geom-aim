@@ -26,6 +26,11 @@ _font_path: str | None = None      # 实际生效的字体文件；None = 退到
 
 def font(size: int) -> pygame.font.Font:
     global _font_path
+    # 字体模块必须显式初始化。平时靠 main.Game() 里的 pygame.init() 顺带完成，
+    # 但单独调用 hud.font()（如 tests/test_core.py::test_font）时还没初始化，
+    # 会直接抛 pygame.error: font not initialized。这里补一道幂等的兜底。
+    if not pygame.font.get_init():
+        pygame.font.init()
     f = _font_cache.get(size)
     if f is not None:
         return f
