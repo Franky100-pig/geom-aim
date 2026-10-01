@@ -24,6 +24,7 @@
 - 注册 / 登录 → 拿 token
 - token 鉴权的成绩上报端点（为排行榜准备）
 - 登出
+- 历史对局记录查询端点（跨设备同步本地战绩，见 §7）
 
 ### 明确不做（写死在方案里，防止范围蔓延）
 
@@ -63,6 +64,21 @@ CREATE TABLE tokens (
     expires_at  TEXT NOT NULL,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE matches (
+    id           INTEGER PRIMARY KEY,
+    user_id      INTEGER NOT NULL REFERENCES users(id),
+    client_uuid  TEXT NOT NULL,           -- 客户端生成，用于幂等去重
+    mode         TEXT NOT NULL,           -- aim_botz / reflex / tracking / peek / bo7
+    weapon       TEXT,                    -- 主武器（可空）
+    score        INTEGER,
+    accuracy     REAL,                    -- 0.0~1.0
+    kills        INTEGER,
+    time_sec     INTEGER,                 -- 本局时长
+    result       TEXT,                    -- win / loss / n/a
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (user_id, client_uuid)         -- 防重复上传污染历史
+);
 ```
 
 ### API 草图
@@ -74,6 +90,8 @@ CREATE TABLE tokens (
 | `POST /api/logout` | 作废当前 token | 需鉴权 |
 | `GET /api/me` | 验活 | 需鉴权 |
 | `POST /api/scores` | 上报成绩（排行榜用） | 需鉴权 + 合理性校验（§4） |
+| `POST /api/matches/batch` | 批量上传本地战绩（跨设备同步） | 需鉴权 + `user_id` 服务端取 + `client_uuid` 幂等 |
+| `GET /api/history` | 查询当前用户历史对局（分页） | 需鉴权 + 只返回自己行 + 分页上限 |
 
 ### 安全清单（从 Resona 审计中继承的纪律）
 
@@ -121,7 +139,57 @@ CREATE TABLE tokens (
 | UE5 客户端对接 | ~1 天 |
 | 部署 + 域名 + HTTPS | ~0.5 天 |
 
-## 7. 决策记录
+## 7. 历史对局记录查询（Match History）
+
+### 现状与动机
+
+`9976de8` 已实现 **Phase 1：本地战绩层 + 历史面板**（`stats.py` 离线 SQLite，游戏内可查看历史），离线优先、无需登录。账号系统激活后的额外价值只有一件事：**跨设备同步**——同一账号在不同 Mac 上能看到同一份战绩。因此本方案不重做本地历史，而是让本地战绩「可上云」。
+
+### 设计原则
+
+1. **本地仍是真源。** 离线照样能玩、能记录、能看历史。账号只是「同步通道」，不是记录的前提。
+2. **同步可选、可关。** 未登录或关闭同步时，行为完全退回 Phase 1。
+3. **幂等上传。** 每条本地战绩在生成时带一个 `client_uuid`，重复上传不会污染历史。
+
+### 数据模型（新增 `matches` 表，见 §3）
+
+字段对齐 `stats.py` 现有记录：模式、武器、分数、命中率、击杀、时长、胜负。
+`UNIQUE (user_id, client_uuid)` 保证同一条本地战绩无论上传几次都只落一行。
+
+### 端点（见 §3 API 草图）
+
+| 端点 | 作用 |
+|------|------|
+| `POST /api/matches/batch` | 客户端把本地未同步战绩批量上传；服务端按 `(user_id, client_uuid)` upsert |
+| `GET /api/history?limit=&offset=&mode=` | 返回当前用户战绩，分页，仅自己行 |
+
+### 与现有 `stats.py` 的衔接
+
+- 本地 SQLite 增一列 `synced INTEGER DEFAULT 0`；每局结束若处于登录态，尝试 `POST /api/matches/batch`，成功后标 `synced=1`。
+- `GET /api/history` 仅用于「换设备后查看 / 网页端查看」，**不回写覆盖本地**——本地永远是最完整的离线真源。
+- 历史面板增加「从服务器刷新」按钮（登录态可用），不登录则隐藏。
+
+### 安全与隐私
+
+1. `user_id` 一律从鉴权 token 取，**绝不从请求体读**，杜绝越权读他人战绩。
+2. `GET /api/history` 强制 `WHERE user_id = ?`，分页上限（如 `limit<=100`）防拉取滥用。
+3. 历史默认私有；公开历史（排行榜页）是另一个独立决策，不在此范围内。
+
+### 客户端对接（扩展 §5）
+
+| 形态 | 做法 |
+|------|------|
+| pygame 版 | `stats.py` 在登录态每局结束尝试上传；`history` 面板加「从服务器刷新」 |
+| UE5 版 | 战绩结构体带 `client_uuid`，同样走 batch 上传；内存态，不落盘 token |
+
+### 工作量估计（追加到 §6）
+
+| 部分 | 时间 |
+|------|------|
+| 后端 `matches` 表 + 2 端点（复用 Resona 模式） | ~0.5 天 |
+| pygame `stats.py` 同步标记 + 上传 + 刷新 UI | ~0.5 天 |
+
+## 8. 决策记录
 
 - **2026-09-28**：用户量小（<20），暂不实施；确立触发条件与本预案。
 - 核心取舍：账号系统的价值（跨设备成绩同步） < 维护成本，直到有真实用户基数。
