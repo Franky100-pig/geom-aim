@@ -77,6 +77,7 @@ cd geom-aim && ./启动游戏.command
 | `H` | 返回标题（任意状态） |
 | `4` | 标题界面：创建局域网房间（主机） |
 | `5` | 标题界面：输入主机地址加入（客户端） |
+| `6` | 标题界面：战绩历史（面板内 `E` 导出 CSV） |
 | `ESC` | 菜单（灵敏度 / FOV / 准星 / 音效）；对战内退回标题；房间界面取消 / 客户端断开 |
 | `R` | 重开（模式结束后） |
 | `[` `]` | 鼠标灵敏度（游戏中可调，±15% 步进） |
@@ -143,6 +144,18 @@ cd geom-aim && ./启动游戏.command
 | TRACKING | 跟枪压枪，黏住高速乱跑的靶，断 0.85s 连击清零 |
 | PEEK | 掩体探头，靶从柱后滑出才可击中 |
 | SNIPER | 远距狙击，右键开/关镜 4x，左键单发需上栓 |
+
+## 战绩历史与分析（Phase 1.5）
+
+标题按 `6` 打开战绩历史（离线优先，无需登录，见 `stats.py`）。面板包含：
+
+- **顶部汇总**：总局数、命中率、爆头率、K/D。
+- **分析行**：命中率趋势（近 5 局 vs 前 5 局，↑/↓）、达标连胜（≥50%，当前/最长）、最佳一局命中率。
+- **列表**：每局明细，个人最佳命中率一局带 ★；`↑↓`/`WS` 滚动。
+- **导出**：按 `E` 把全部战绩导出成 CSV（与成绩库同目录，`<db>_export.csv`）。
+
+分析逻辑在 `analytics.py`（纯函数、纯本地、可单测），HUD 只负责渲染。
+云端同步 / 账号系统见 `docs/ACCOUNT_SYSTEM_PLAN.md`（用户数 ≥20 才启动）。
 
 ## 枪感与调参
 
@@ -214,6 +227,7 @@ ai.py        Agent 状态机 + BFS 寻路 + AI 命中判定
 match.py     Match：对战/积分赛状态机、队伍、经济、胜负、重生、观战
 net.py       局域网联机网络层（UDP/JSON、分片、主机/客户端）
 hud.py       准星、计分板、枪模型、菜单、开镜镜框、对战/积分赛 HUD、标题
+analytics.py 战绩分析：趋势 / 分模式汇总 / 最佳最差 / 连胜 / CSV 导出（纯本地）
 effects.py   曳光弹、枪口火光、碎片、飘字、命中标记
 audio.py     numpy 合成枪声与命中音
 config.py    全部可调参数（AI_DIFF_* / ECON_* / MATCH_* / SCORE_* / COVER_* / TERRAIN_*）
@@ -230,6 +244,8 @@ python3 tests/test_cover.py        # 掩体对称/连通/遮挡
 python3 tests/test_nades.py        # 烟雾弹
 python3 tests/test_title_return.py # H 返回标题
 python3 tests/test_net.py          # 局域网联机：握手/输入/快照分片/超时
+python3 tests/test_analytics.py    # 战绩分析层：趋势/汇总/连胜/导出
+python3 tests/test_history.py      # 战绩历史面板：打开/滚动/渲染/E 导出
 python3 tests/bench.py             # 渲染开销基准
 ```
 
