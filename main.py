@@ -24,6 +24,7 @@ import pygame  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import config as C  # noqa: E402
+import analytics  # noqa: E402
 import hud  # noqa: E402
 from audio import Audio  # noqa: E402
 from effects import Effects  # noqa: E402
@@ -125,6 +126,7 @@ class Game:
         self._last_match_over = False
         self.stats_store = LocalStatsStore()
         self.history_scroll = 0          # 历史面板滚动偏移（行）
+        self.exported_csv_path: str | None = None   # 历史面板 E 导出后的文件路径
 
         # 标题界面：不抓鼠标（要看得到光标、能选），背后用 botz 当静态预览背景
         self._grab(False)
@@ -659,8 +661,14 @@ class Game:
             p.firing = True
             p.cooldown = 0.0
 
+    def export_history_csv(self) -> str:
+        """历史面板按 E：把全部战绩导出成 CSV（与成绩库同目录，便于找回）。"""
+        out = os.path.splitext(self.stats_store.path)[0] + "_export.csv"
+        analytics.export_csv(out, self.stats_store.all())
+        return out
+
     def on_key(self, key):
-        # ---------- 战绩历史面板：ESC / H / 6 返回标题；↑↓/WS 滚动 ----------
+        # ---------- 战绩历史面板：ESC / H / 6 返回标题；↑↓/WS 滚动；E 导出 ----------
         if self.state == "history":
             if key in (pygame.K_ESCAPE, pygame.K_h, pygame.K_6):
                 self.state = "title"
@@ -669,6 +677,8 @@ class Game:
                 self.history_scroll = max(0, self.history_scroll - 1)
             elif key in (pygame.K_DOWN, pygame.K_s):
                 self.history_scroll += 1          # 上限在 draw 里夹紧
+            elif key == pygame.K_e:
+                self.exported_csv_path = self.export_history_csv()
             return
 
         # ---------- 任意状态：H 返回标题（练习/对战/暂停菜单都行；标题/历史除外） ----------
