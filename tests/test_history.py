@@ -109,6 +109,29 @@ def test_history_scroll_clamped():
     check("滚动偏移不为负", g.history_scroll >= 0, str(g.history_scroll))
 
 
+def test_history_export_csv_key():
+    import csv as _csv
+    _fresh_db()
+    _seed(5)
+    g = main.Game()
+    g.state = "history"
+    g.on_key(pygame.K_e)
+    path = g.exported_csv_path
+    check("按 E 后记录导出路径", bool(path), str(path))
+    check("导出文件存在", path is not None and os.path.exists(path), str(path))
+    if path and os.path.exists(path):
+        with open(path, newline="", encoding="utf-8") as f:
+            data = list(_csv.reader(f))
+        check("表头 + 5 行战绩", len(data) == 6, str(len(data)))
+        check("路径在成绩库同目录",
+              os.path.dirname(path) == os.path.dirname(
+                  os.environ["GEOM_AIM_STATS_DB"]), path)
+        os.unlink(path)
+    else:
+        check("表头 + 5 行战绩", False, "no file")
+        check("路径在成绩库同目录", False, "no file")
+
+
 def run_tests():
     print("=== 战绩历史面板回归 ===")
     test_open_history_from_title(); print()
@@ -116,6 +139,7 @@ def run_tests():
     test_history_draw_no_crash(); print()
     test_history_draw_empty_no_crash(); print()
     test_history_scroll_clamped(); print()
+    test_history_export_csv_key(); print()
     print(f"\n通过 {len(PASS)} 项，失败 {len(FAIL)} 项")
     if FAIL:
         for f in FAIL:
