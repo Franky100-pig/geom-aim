@@ -867,6 +867,7 @@ def draw_history(surf, renderer, game):
     text(surf, "得分/时长", 16, (right, header_y), C.C_DIM, anchor="mr")
 
     row_h = 30
+    best_acc = analytics.best_worst(rows, key="accuracy")[0]
     first = h * 0.35
     visible = int((h * 0.88 - first) / row_h)
     max_scroll = max(0, len(rows) - visible)
@@ -889,8 +890,10 @@ def draw_history(surf, renderer, game):
         text(surf, tstr, 15, (col_x + 40, y), C.C_TEXT, anchor="ml")
         text(surf, MODE_LABEL.get(r.mode, r.mode), 15,
              (col_x + 220, y), C.C_ACCENT, anchor="ml")
-        text(surf, _fmt_metric(r.accuracy()), 15, (col_x + 360, y),
-             C.C_GOOD, anchor="ml")
+        acc_txt = _fmt_metric(r.accuracy())
+        if r is best_acc:
+            acc_txt += " ★"          # 个人最佳命中率标记
+        text(surf, acc_txt, 15, (col_x + 360, y), C.C_GOOD, anchor="ml")
         text(surf, _fmt_metric(r.headshot_rate()), 15, (col_x + 470, y),
              C.C_TEXT, anchor="ml")
         text(surf, kd, 15, (col_x + 580, y), C.C_TEXT, anchor="ml")
