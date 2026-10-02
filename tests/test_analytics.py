@@ -49,18 +49,32 @@ def test_trend_returns_none_when_no_history():
 
 def test_trend_ignores_undefined_metrics():
     import analytics
-    # 没开火 -> accuracy() 返回 None，不该污染均值
-    rows = [_s(shots=0, hits=0), _s(shots=0, hits=0),
-            _s(hits=100, shots=100), _s(hits=100, shots=100)]
+    # 没开火 -> accuracy() 返回 None。窗口内混合 None 与有效值时，
+    # None 应被跳过（而不是当成 0 拉低均值）。
+    rows = [_s(shots=0, hits=0), _s(hits=100, shots=100),
+            _s(hits=20, shots=100), _s(hits=40, shots=100)]
     t = analytics.trend(rows, n=2, key="accuracy")
-    check("trend 跳过 None 指标", abs(t["recent"] - 1.0) < 1e-9, str(t["recent"]))
-    check("trend 只用有效值算 prev", abs(t["prev"] - 1.0) < 1e-9, str(t["prev"]))
+    check("trend 跳过 None 只算有效值", abs(t["recent"] - 1.0) < 1e-9,
+          str(t["recent"]))
+    check("prev 按普通均值算", abs(t["prev"] - 0.3) < 1e-9, str(t["prev"]))
+
+
+def test_trend_window_all_undefined():
+    import analytics
+    # 最近 n 局全都「没开火」-> 该窗口没有可算的值，返回 None（而不是 0）
+    rows = [_s(shots=0, hits=0), _s(shots=0, hits=0),
+            _s(hits=20, shots=100), _s(hits=40, shots=100)]
+    t = analytics.trend(rows, n=2, key="accuracy")
+    check("窗口内全是 None 时 recent 为 None", t["recent"] is None, str(t["recent"]))
+    check("prev 仍按有效值算", abs(t["prev"] - 0.3) < 1e-9, str(t["prev"]))
+    check("recent 为 None 时 delta 也为 None", t["delta"] is None, str(t["delta"]))
 
 
 if __name__ == "__main__":
     test_trend_newest_vs_previous()
     test_trend_returns_none_when_no_history()
     test_trend_ignores_undefined_metrics()
+    test_trend_window_all_undefined()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         raise SystemExit(1)
