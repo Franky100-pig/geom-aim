@@ -89,3 +89,32 @@ def best_worst(rows: Sequence[Session],
     best = max(valid, key=lambda p: p[1])[0]
     worst = min(valid, key=lambda p: p[1])[0]
     return (best, worst)
+
+
+def streaks(rows: Sequence[Session], threshold: float = 0.5) -> dict:
+    """命中率达标连胜统计。
+
+    rows 按「最新在前」。``current`` 从最新局往回数连续达标的局数；
+    ``best`` 是任意位置出现过的最长连胜。没开火的局（accuracy 为 None）
+    视为不达标：中断 current，也不延续 best。
+    """
+    best = 0
+    run = 0
+    for r in rows:
+        acc = r.accuracy()
+        if acc is not None and acc >= threshold:
+            run += 1
+            best = max(best, run)
+        else:
+            run = 0
+
+    # current 是「从最新局开始的prefix 连胜」；上面的 run 是遍历到最旧一局
+    # 时尾部的连胜，二者不是一回事，必须单独数。
+    current = 0
+    for r in rows:
+        acc = r.accuracy()
+        if acc is not None and acc >= threshold:
+            current += 1
+        else:
+            break
+    return {"current": current, "best": best, "sessions": len(rows)}

@@ -136,6 +136,34 @@ def test_best_worst_all_undefined():
           f"{best} {worst}")
 
 
+def test_streaks_current_and_best():
+    import analytics
+    # rows 最新在前：0.3 断 -> 0.9/0.8/0.6/0.7 连续 4 局达标
+    rows = [_s(hits=30, shots=100), _s(hits=90, shots=100),
+            _s(hits=80, shots=100), _s(hits=60, shots=100),
+            _s(hits=70, shots=100)]
+    st = analytics.streaks(rows, threshold=0.5)
+    check("最新局不达标 -> current 0", st["current"] == 0, str(st))
+    check("历史最长连胜 4", st["best"] == 4, str(st))
+    check("总局数", st["sessions"] == 5, str(st))
+
+
+def test_streaks_current_counts_from_newest():
+    import analytics
+    rows = [_s(hits=80, shots=100), _s(hits=70, shots=100),
+            _s(hits=20, shots=100), _s(hits=90, shots=100)]
+    st = analytics.streaks(rows, threshold=0.5)
+    check("current 从最新往回数", st["current"] == 2, str(st))
+    check("best 是任意位置最长", st["best"] == 2, str(st))
+
+
+def test_streaks_empty():
+    import analytics
+    st = analytics.streaks([])
+    check("空输入 current/best 都是 0",
+          st["current"] == 0 and st["best"] == 0, str(st))
+
+
 if __name__ == "__main__":
     test_trend_newest_vs_previous()
     test_trend_returns_none_when_no_history()
@@ -149,6 +177,9 @@ if __name__ == "__main__":
     test_best_worst_picks_extremes()
     test_best_worst_ignores_no_shot_sessions()
     test_best_worst_all_undefined()
+    test_streaks_current_and_best()
+    test_streaks_current_counts_from_newest()
+    test_streaks_empty()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         raise SystemExit(1)
