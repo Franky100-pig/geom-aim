@@ -118,3 +118,32 @@ def streaks(rows: Sequence[Session], threshold: float = 0.5) -> dict:
         else:
             break
     return {"current": current, "best": best, "sessions": len(rows)}
+
+
+CSV_COLUMNS = ("time", "mode", "shots", "hits", "headshots", "kills",
+               "deaths", "score", "duration_s", "accuracy")
+
+
+def export_csv(path: str, rows: Sequence[Session]) -> int:
+    """把战绩导出成 CSV，返回写入的数据行数（不含表头）。
+
+    与 trend()/streaks() 同一套 None 语义：没开火的局 accuracy 落空串。
+    """
+    import csv
+    import time
+
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(CSV_COLUMNS)
+        n = 0
+        for r in rows:
+            acc = r.accuracy()
+            w.writerow([
+                (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(r.created_at))
+                 if r.created_at else ""),
+                r.mode, r.shots, r.hits, r.headshots, r.kills, r.deaths,
+                r.score, f"{r.duration_s:.2f}",
+                "" if acc is None else f"{acc:.4f}",
+            ])
+            n += 1
+    return n

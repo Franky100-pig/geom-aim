@@ -164,6 +164,29 @@ def test_streaks_empty():
           st["current"] == 0 and st["best"] == 0, str(st))
 
 
+def test_export_csv_writes_rows():
+    import csv as _csv
+    import tempfile
+    import analytics
+    rows = [_s(hits=70, shots=100, headshots=10, kills=12, deaths=3,
+               score=420, dur=61.5, at=1759000000.0),
+            _s(shots=0, hits=0)]
+    fd, path = tempfile.mkstemp(suffix=".csv")
+    os.close(fd)
+    try:
+        n = analytics.export_csv(path, rows)
+        check("返回写入行数", n == 2, str(n))
+        with open(path, newline="", encoding="utf-8") as f:
+            data = list(_csv.reader(f))
+        check("表头 + 2 行", len(data) == 3, str(len(data)))
+        check("表头含 accuracy", data[0][-1] == "accuracy", str(data[0]))
+        check("没开火的局 accuracy 为空串", data[2][-1] == "", str(data[2]))
+        check("命中率 4 位小数", data[1][-1] == "0.7000", str(data[1][-1]))
+        check("kills 正确落列", data[1][5] == "12", str(data[1]))
+    finally:
+        os.unlink(path)
+
+
 if __name__ == "__main__":
     test_trend_newest_vs_previous()
     test_trend_returns_none_when_no_history()
@@ -180,6 +203,7 @@ if __name__ == "__main__":
     test_streaks_current_and_best()
     test_streaks_current_counts_from_newest()
     test_streaks_empty()
+    test_export_csv_writes_rows()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         raise SystemExit(1)
