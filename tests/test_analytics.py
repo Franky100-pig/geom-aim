@@ -111,6 +111,31 @@ def test_per_mode_summary_empty():
     check("空输入返回空列表", analytics.per_mode_summary([]) == [])
 
 
+def test_best_worst_picks_extremes():
+    import analytics
+    a, b, c = _s(hits=50, shots=100), _s(hits=100, shots=100), _s(hits=20, shots=100)
+    rows = [a, b, c]
+    best, worst = analytics.best_worst(rows, key="accuracy")
+    check("best 是命中率最高那局", best is b, str(best))
+    check("worst 是命中率最低那局", worst is c, str(worst))
+
+
+def test_best_worst_ignores_no_shot_sessions():
+    import analytics
+    rows = [_s(shots=0, hits=0), _s(hits=100, shots=100)]
+    best, worst = analytics.best_worst(rows, key="accuracy")
+    check("没开火的局不参与评选", best is rows[1] and worst is rows[1],
+          f"{best} {worst}")
+
+
+def test_best_worst_all_undefined():
+    import analytics
+    rows = [_s(shots=0, hits=0), _s(shots=0, hits=0)]
+    best, worst = analytics.best_worst(rows, key="accuracy")
+    check("全 undefined -> (None, None)", best is None and worst is None,
+          f"{best} {worst}")
+
+
 if __name__ == "__main__":
     test_trend_newest_vs_previous()
     test_trend_returns_none_when_no_history()
@@ -121,6 +146,9 @@ if __name__ == "__main__":
     test_moving_average_window_one()
     test_per_mode_summary_groups_and_sorts()
     test_per_mode_summary_empty()
+    test_best_worst_picks_extremes()
+    test_best_worst_ignores_no_shot_sessions()
+    test_best_worst_all_undefined()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         raise SystemExit(1)

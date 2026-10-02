@@ -73,3 +73,19 @@ def per_mode_summary(rows: Sequence[Session]) -> list[dict]:
                     "kd": a["kd"], "score": a["score"]})
     out.sort(key=lambda d: d["sessions"], reverse=True)
     return out
+
+
+def best_worst(rows: Sequence[Session],
+               key: str = "accuracy") -> tuple[Optional[Session],
+                                               Optional[Session]]:
+    """按某派生指标选最佳/最差的一局（没开火的局不参与）。
+
+    返回 ``(best, worst)``；没有任何可比较样本时返回 ``(None, None)``。
+    """
+    pairs = [(r, getattr(r, key)()) for r in rows]
+    valid = [(r, v) for r, v in pairs if v is not None]
+    if not valid:
+        return (None, None)
+    best = max(valid, key=lambda p: p[1])[0]
+    worst = min(valid, key=lambda p: p[1])[0]
+    return (best, worst)
