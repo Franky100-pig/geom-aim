@@ -8,6 +8,7 @@ import time
 import pygame
 
 import config as C
+import analytics
 import stats
 from engine import clamp, lerp_rgb
 from targets import MODE_KEYS, MODE_NAMES
@@ -846,10 +847,17 @@ def draw_history(surf, renderer, game):
                f"   总击杀 {agg['kills']} / 死亡 {agg['deaths']}   K/D {kd}")
     text(surf, summary, 16, (w * 0.5, h * 0.175), C.C_TEXT, anchor="cm")
 
+    # —— 分析行（Phase 1.5：趋势 / 连胜 / 最佳，纯本地计算）——
+    ay = h * 0.205
+    for label, val in analytics.panel_summary(rows, n=5):
+        text(surf, label, 15, (pad, ay), C.C_DIM, anchor="ml")
+        text(surf, val, 15, (pad + 280, ay), C.C_ACCENT, anchor="ml")
+        ay += 0.03 * h
+
     # —— 列表（可滚动）——
     col_x = pad
     right = w - pad
-    header_y = h * 0.23
+    header_y = h * 0.31
     text(surf, "#", 16, (col_x, header_y), C.C_DIM, anchor="ml")
     text(surf, "时间", 16, (col_x + 40, header_y), C.C_DIM, anchor="ml")
     text(surf, "模式", 16, (col_x + 220, header_y), C.C_DIM, anchor="ml")
@@ -859,7 +867,7 @@ def draw_history(surf, renderer, game):
     text(surf, "得分/时长", 16, (right, header_y), C.C_DIM, anchor="mr")
 
     row_h = 30
-    first = h * 0.27
+    first = h * 0.35
     visible = int((h * 0.88 - first) / row_h)
     max_scroll = max(0, len(rows) - visible)
     game.history_scroll = clamp(game.history_scroll, 0, max_scroll)
