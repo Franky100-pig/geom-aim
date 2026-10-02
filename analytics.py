@@ -38,3 +38,19 @@ def trend(rows: Sequence[Session], n: int = 5,
     prev = _mean(vals[n:2 * n])
     delta = None if (recent is None or prev is None) else recent - prev
     return {"recent": recent, "prev": prev, "delta": delta}
+
+
+def moving_average(values: Sequence[Optional[float]],
+                   window: int) -> list[Optional[float]]:
+    """滑动平均，输出长度与输入一致（头部样本不足时用已有数据算）。
+
+    与 trend() 同一套语义：None 跳过不拉低均值；段内全是 None 则该点为 None。
+    window <= 1 时原样返回（转 float）。
+    """
+    if window <= 1:
+        return [float(v) if v is not None else None for v in values]
+    out: list[Optional[float]] = []
+    for i in range(len(values)):
+        lo = max(0, i - window + 1)
+        out.append(_mean(values[lo:i + 1]))
+    return out

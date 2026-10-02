@@ -70,11 +70,38 @@ def test_trend_window_all_undefined():
     check("recent 为 None 时 delta 也为 None", t["delta"] is None, str(t["delta"]))
 
 
+def test_moving_average_basic():
+    import analytics
+    ma = analytics.moving_average([1, 2, 3, 4], window=3)
+    check("ma 长度不变", len(ma) == 4, str(ma))
+    check("ma[0] 只有一个样本", ma[0] == 1.0, str(ma[0]))
+    check("ma[1] 前两个均值", abs(ma[1] - 1.5) < 1e-9, str(ma[1]))
+    check("ma[2] 窗口满", abs(ma[2] - 2.0) < 1e-9, str(ma[2]))
+    check("ma[3] 滑动", abs(ma[3] - 3.0) < 1e-9, str(ma[3]))
+
+
+def test_moving_average_skips_none():
+    import analytics
+    ma = analytics.moving_average([None, 4, 6], window=2)
+    check("段内全是 None -> None（不是 0）", ma[0] is None, str(ma))
+    check("None 被跳过不拉低均值", ma[1] == 4.0, str(ma))
+    check("None 之后的段正常", ma[2] == 5.0, str(ma))
+
+
+def test_moving_average_window_one():
+    import analytics
+    ma = analytics.moving_average([2, None, 4], window=1)
+    check("window=1 原样返回", ma == [2.0, None, 4.0], str(ma))
+
+
 if __name__ == "__main__":
     test_trend_newest_vs_previous()
     test_trend_returns_none_when_no_history()
     test_trend_ignores_undefined_metrics()
     test_trend_window_all_undefined()
+    test_moving_average_basic()
+    test_moving_average_skips_none()
+    test_moving_average_window_one()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         raise SystemExit(1)
