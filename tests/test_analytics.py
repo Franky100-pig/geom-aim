@@ -187,6 +187,30 @@ def test_export_csv_writes_rows():
         os.unlink(path)
 
 
+def test_panel_summary_rows():
+    import analytics
+    # 4 局：近 2 局命中率高 -> 趋势 ↑
+    rows = [_s(hits=90, shots=100), _s(hits=80, shots=100),
+            _s(hits=30, shots=100), _s(hits=40, shots=100)]
+    out = analytics.panel_summary(rows, n=2)
+    labels = [k for k, _ in out]
+    check("包含趋势行", any("趋势" in k for k in labels), str(labels))
+    check("包含连胜行", any("连胜" in k for k in labels), str(labels))
+    check("包含最佳行", any("最佳" in k for k in labels), str(labels))
+    trend_val = dict(out)["命中率趋势"]
+    check("上升趋势带 ↑", trend_val.startswith("↑"), trend_val)
+
+
+def test_panel_summary_down_and_insufficient():
+    import analytics
+    rows = [_s(hits=20, shots=100), _s(hits=30, shots=100),
+            _s(hits=90, shots=100), _s(hits=80, shots=100)]
+    trend_val = dict(analytics.panel_summary(rows, n=2))["命中率趋势"]
+    check("下降趋势带 ↓", trend_val.startswith("↓"), trend_val)
+    thin = dict(analytics.panel_summary(rows[:1], n=2))["命中率趋势"]
+    check("样本不足显示 —", thin.startswith("—"), thin)
+
+
 if __name__ == "__main__":
     test_trend_newest_vs_previous()
     test_trend_returns_none_when_no_history()
@@ -204,6 +228,8 @@ if __name__ == "__main__":
     test_streaks_current_counts_from_newest()
     test_streaks_empty()
     test_export_csv_writes_rows()
+    test_panel_summary_rows()
+    test_panel_summary_down_and_insufficient()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         raise SystemExit(1)
