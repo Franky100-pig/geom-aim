@@ -147,3 +147,33 @@ def export_csv(path: str, rows: Sequence[Session]) -> int:
             ])
             n += 1
     return n
+
+
+def _fmt_pct(v: Optional[float]) -> str:
+    return "—" if v is None else f"{v * 100:.1f}%"
+
+
+def panel_summary(rows: Sequence[Session], n: int = 5
+                  ) -> list[tuple[str, str]]:
+    """历史面板顶部的分析行（HUD 直接逐行画，逻辑留在这里便于单测）。
+
+    返回 ``(标签, 值)`` 列表；值可能是「—」。当前三行：
+    命中率趋势 / 达标连胜 / 最佳一局命中率。
+    """
+    t = trend(rows, n=n, key="accuracy")
+    if t["delta"] is None:
+        trend_val = "—（样本不足）"
+    else:
+        d = t["delta"] * 100
+        arrow = "↑" if d > 0 else ("↓" if d < 0 else "→")
+        trend_val = f"{arrow} {abs(d):.1f}pp（近{n}局 vs 前{n}局）"
+
+    st = streaks(rows)
+    best, _ = best_worst(rows, key="accuracy")
+
+    return [
+        ("命中率趋势", trend_val),
+        ("达标连胜", f"当前 {st['current']} · 最长 {st['best']}"),
+        ("最佳一局命中率",
+         _fmt_pct(best.accuracy() if best is not None else None)),
+    ]
