@@ -899,11 +899,15 @@ def draw_history(surf, renderer, game):
         text(surf, kd, 15, (col_x + 580, y), C.C_TEXT, anchor="ml")
         text(surf, tail, 15, (right, y), C.C_DIM, anchor="mr")
 
-    hint = "ESC / H / 6  返回主菜单"
+    hint = "E 导出 CSV    ESC / H / 6  返回主菜单"
     if max_scroll > 0:
         hint += f"    ↑↓ / W S  滚动（{game.history_scroll + 1}"
         hint += f"–{game.history_scroll + len(shown)} / {len(rows)}）"
     text(surf, hint, 15, (w * 0.5, h * 0.93), C.C_DIM, anchor="cm")
+    exported = getattr(game, "exported_csv_path", None)
+    if exported:
+        text(surf, f"已导出：{exported}", 14, (w * 0.5, h * 0.90),
+             C.C_GOOD, anchor="cm")
 
 
 # ---------------------------------------------------------------- 菜单
