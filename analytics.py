@@ -54,3 +54,22 @@ def moving_average(values: Sequence[Optional[float]],
         lo = max(0, i - window + 1)
         out.append(_mean(values[lo:i + 1]))
     return out
+
+
+def per_mode_summary(rows: Sequence[Session]) -> list[dict]:
+    """按模式分组汇总（复用 stats.aggregate），按局数降序。
+
+    返回字段：mode / sessions / accuracy / headshot_rate / kd / score。
+    """
+    groups: dict[str, list[Session]] = {}
+    for r in rows:
+        groups.setdefault(r.mode, []).append(r)
+    out = []
+    for mode, rs in groups.items():
+        a = aggregate(rs)
+        out.append({"mode": mode, "sessions": a["sessions"],
+                    "accuracy": a["accuracy"],
+                    "headshot_rate": a["headshot_rate"],
+                    "kd": a["kd"], "score": a["score"]})
+    out.sort(key=lambda d: d["sessions"], reverse=True)
+    return out

@@ -94,6 +94,23 @@ def test_moving_average_window_one():
     check("window=1 原样返回", ma == [2.0, None, 4.0], str(ma))
 
 
+def test_per_mode_summary_groups_and_sorts():
+    import analytics
+    rows = ([_s(mode="botz", hits=100, shots=100)] +
+            [_s(mode="reflex", hits=50, shots=100, score=100)] * 3)
+    out = analytics.per_mode_summary(rows)
+    check("每种模式一行", len(out) == 2, str(out))
+    check("按局数降序", out[0]["mode"] == "reflex", str(out[0]["mode"]))
+    check("botz 行命中率 1.0", out[1]["accuracy"] == 1.0, str(out[1]))
+    check("reflex 行命中率 0.5", out[0]["accuracy"] == 0.5, str(out[0]))
+    check("reflex 局数 3", out[0]["sessions"] == 3, str(out[0]["sessions"]))
+
+
+def test_per_mode_summary_empty():
+    import analytics
+    check("空输入返回空列表", analytics.per_mode_summary([]) == [])
+
+
 if __name__ == "__main__":
     test_trend_newest_vs_previous()
     test_trend_returns_none_when_no_history()
@@ -102,6 +119,8 @@ if __name__ == "__main__":
     test_moving_average_basic()
     test_moving_average_skips_none()
     test_moving_average_window_one()
+    test_per_mode_summary_groups_and_sorts()
+    test_per_mode_summary_empty()
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:
         raise SystemExit(1)
