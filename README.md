@@ -155,7 +155,8 @@ cd geom-aim && ./启动游戏.command
 - **导出**：按 `E` 把全部战绩导出成 CSV（与成绩库同目录，`<db>_export.csv`）。
 
 分析逻辑在 `analytics.py`（纯函数、纯本地、可单测），HUD 只负责渲染。
-云端同步 / 账号系统见 `docs/ACCOUNT_SYSTEM_PLAN.md`（用户数 ≥20 才启动）。
+云端同步 / 账号系统见 `docs/ACCOUNT_SYSTEM_PLAN.md`（用户数 ≥20 才启动；
+用户数用 `python3 tools/user_count.py` 度量，2026-10-06 实测净下载量 0）。
 
 ## 枪感与调参
 
@@ -231,6 +232,7 @@ analytics.py 战绩分析：趋势 / 分模式汇总 / 最佳最差 / 连胜 / C
 effects.py   曳光弹、枪口火光、碎片、飘字、命中标记
 audio.py     numpy 合成枪声与命中音
 config.py    全部可调参数（AI_DIFF_* / ECON_* / MATCH_* / SCORE_* / COVER_* / TERRAIN_*）
+tools/       维护脚本（不与游戏一起运行）
 tests/       无头自检套件（练习 / 对战 / 积分赛 / 掩体 / 烟雾 / 返回标题）
 ```
 
@@ -246,6 +248,7 @@ python3 tests/test_title_return.py # H 返回标题
 python3 tests/test_net.py          # 局域网联机：握手/输入/快照分片/超时
 python3 tests/test_analytics.py    # 战绩分析层：趋势/汇总/连胜/导出
 python3 tests/test_history.py      # 战绩历史面板：打开/滚动/渲染/E 导出
+python3 tests/test_user_count.py   # 用户数度量：口径/翻页形状/阈值边界（纯离线）
 python3 tests/bench.py             # 渲染开销基准
 ```
 
