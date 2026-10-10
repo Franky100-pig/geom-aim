@@ -62,10 +62,6 @@ class Target:
         self.scale = 1.0
         self.ground_z = 0.0    # 脚下地形高度（高度图采样），渲染时让靶子踩在坡上
 
-    @property
-    def tracking(self) -> bool:
-        return self.kind == "track"
-
 
 class Range:
     """靶场：负责生成、移动、生命周期，不碰渲染和计分。"""

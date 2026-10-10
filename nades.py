@@ -78,10 +78,6 @@ class SmokeGrenade:
         return self._r
 
     @property
-    def smoking(self) -> bool:
-        return self._r > 0.0
-
-    @property
     def density(self) -> float:
         """0~1 的浓度，用来控制渲染透明度。"""
         if self._r <= 0.0:

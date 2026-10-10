@@ -151,10 +151,6 @@ class Agent:
         self.shots = 0
         self.hits = 0
 
-    @property
-    def dead(self) -> bool:
-        return not self.alive
-
 
 # ---------------------------------------------------------------- 感知
 

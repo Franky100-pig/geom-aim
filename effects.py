@@ -128,9 +128,3 @@ class Effects:
                     (cx - math.cos(aa) * ln, cy - math.sin(aa) * ln),
                     (cx + math.cos(aa) * ln, cy + math.sin(aa) * ln),
                     max(2, int(3 * a)))
-
-    def shake_offset(self):
-        if self.shake < 0.05:
-            return 0.0, 0.0
-        return (random.uniform(-self.shake, self.shake),
-                random.uniform(-self.shake, self.shake))

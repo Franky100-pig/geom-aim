@@ -735,9 +735,6 @@ class Renderer:
         """当前眼高（世界单位）。基准 EYE_HEIGHT，跳跃时再加上相机的 z。"""
         return C.EYE_HEIGHT + cam.z
 
-    def pixels_per_unit(self, depth: float) -> float:
-        return self.h * self.vs / max(depth, NEAR)
-
     def project(self, cam: Camera, wx: float, wy: float, world_h: float):
         """世界点 → 屏幕。返回 (sx, sy, depth)，相机背后返回 None。"""
         dx, dy = cam.dir()
@@ -755,10 +752,6 @@ class Renderer:
     def aim_height(self, cam: Camera, depth: float) -> float:
         """准星（屏幕正中）在给定深度处指向的世界高度。"""
         return self.eye_h(cam) + cam.eff_pitch_px * depth / (self.h * self.vs)
-
-    def screen_to_pixels_pitch(self, angle: float) -> float:
-        """把垂直视角（弧度）换算成地平线像素偏移。"""
-        return angle * self.h * self.vs
 
     # -- 背景 ----------------------------------------------------------
 
