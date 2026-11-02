@@ -4,7 +4,7 @@
 标题界面： 1 练习模式    2 对战 3v3    3 积分赛 5v5    4 创建房间    5 加入房间    [ ] 调 AI 难度
 练习：     WASD 移动 / 鼠标 转视角 / 左键 开火 / 右键 轻点开关镜（SNIPER）/ 1-5 换模式
 对战：     买枪阶段 1-5 买枪 / 左键 开火 / 右键 开镜 / ESC 菜单 / H 返回主菜单
-积分赛：   5v5 连续重生 TDM，1-5 自由换枪，先到 25 杀获胜 / E 蹲 / H 返回主菜单
+积分赛：   5v5 连续重生 TDM，1-5 自由换枪，先到 25 杀获胜 / Ctrl 蹲 / H 返回主菜单
 局域网：   4 建房（人类 vs AI，最多 3 人），5 输入主机 IP 或 xxx.local 加入
 """
 
@@ -353,7 +353,9 @@ class Game:
         mbt = pygame.mouse.get_pressed()
         mvx = (1 if keys[pygame.K_w] else 0) - (1 if keys[pygame.K_s] else 0)
         mvy = (1 if keys[pygame.K_d] else 0) - (1 if keys[pygame.K_a] else 0)
-        crouch = bool(keys[pygame.K_e])          # 蹲键与单机统一为 E
+        # 蹲键用左 Ctrl（CS2 默认），与单机一致。K_LCTRL 是修饰键位掩码，不能直接
+        # 当下标查 get_pressed()（会 IndexError），必须用 get_mods() 检测修饰键。
+        crouch = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
         jump = bool(keys[pygame.K_SPACE])
         fire = bool(mbt[0])
         smoke = self._smoke_pending
@@ -1525,7 +1527,7 @@ def main():
     print("  标题界面：  1 练习模式    2 对战 3v3    3 积分赛 5v5    [ ] 调 AI 难度")
     print("  练习：      WASD 移动  鼠标 转视角  左键 开火  右键 开关镜  1-5 换模式")
     print("  对战：      买枪阶段 1-5 买枪  左键 开火  右键 开镜  R（结束后）再来一局")
-    print("  积分赛：    5v5 连续重生 TDM，1-5 自由换枪，先到 25 杀获胜，E 蹲")
+    print("  积分赛：    5v5 连续重生 TDM，1-5 自由换枪，先到 25 杀获胜，Ctrl 蹲")
     print("  通用：      ESC 菜单（灵敏度 / FOV / 准星 / 音效）  H 返回主菜单  M 静音  F 全屏")
     Game().run()
 

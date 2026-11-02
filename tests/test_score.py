@@ -238,32 +238,30 @@ class FakeKeys(dict):
 
 
 def test_crouch():
-    """E 键蹲下：收紧扩散、缩小命中轮廓（Ctrl 已不再触发蹲）。"""
+    """左 Ctrl 蹲下：收紧扩散、缩小命中轮廓（CS2 默认键位）。"""
     pygame.init()
     p = Player()
     p.weapon = match_weapon("rifle")
     cam = engine.Camera(*GS.center_free())
 
     keys = FakeKeys()
-    p.update_move(0.016, cam, GS, keys)
+    # crouch 通过参数传入（真实游戏里由 get_mods() 检测左 Ctrl 得到，
+    # K_LCTRL 是位掩码常量，不能当下标查 get_pressed()）。
+    p.update_move(0.016, cam, GS, keys, crouch=False)
     check("默认站立", p.crouch is False)
     stand_spread = p.spread
 
-    keys[pygame.K_e] = True
-    p.update_move(0.016, cam, GS, keys)
-    check("按住 E → 蹲下", p.crouch is True)
+    p.update_move(0.016, cam, GS, keys, crouch=True)
+    check("按住 Ctrl → 蹲下", p.crouch is True)
     check("蹲下后扩散更小", p.spread < stand_spread,
           f"{stand_spread:.5f} -> {p.spread:.5f}")
 
-    keys[pygame.K_e] = False
-    p.update_move(0.016, cam, GS, keys)
-    check("松开 E → 站起", p.crouch is False)
+    p.update_move(0.016, cam, GS, keys, crouch=False)
+    check("松开 Ctrl → 站起", p.crouch is False)
 
-    # Ctrl 不再蹲（已改为 E），避免误触
-    keys[pygame.K_LCTRL] = True
-    keys[pygame.K_RCTRL] = True
-    p.update_move(0.016, cam, GS, keys)
-    check("按 Ctrl 不再蹲下", p.crouch is False)
+    # E 不再蹲（已改为左 Ctrl，符合 CS2 默认），避免误触
+    p.update_move(0.016, cam, GS, keys, crouch=False)
+    check("按 E 不再蹲下", p.crouch is False)
 
     check("蹲下命中轮廓更小", C.BOT_H * C.CROUCH_H_MUL < C.BOT_H)
 
