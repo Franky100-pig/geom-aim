@@ -356,6 +356,8 @@ class Game:
         # 蹲键用左 Ctrl（CS2 默认），与单机一致。K_LCTRL 是修饰键位掩码，不能直接
         # 当下标查 get_pressed()（会 IndexError），必须用 get_mods() 检测修饰键。
         crouch = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
+        # Shift 慢走（CS2 默认），和蹲一样是修饰键，必须用 get_mods() 检测。
+        walk = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
         jump = bool(keys[pygame.K_SPACE])
         fire = bool(mbt[0])
         smoke = self._smoke_pending
@@ -364,7 +366,7 @@ class Game:
         self._cycle_pending = False
         reload = self._reload_pending
         self._reload_pending = False
-        inp = dict(mvx=mvx, mvy=mvy, crouch=crouch, jump=jump, fire=fire,
+        inp = dict(mvx=mvx, mvy=mvy, crouch=crouch, walk=walk, jump=jump, fire=fire,
                    weapon=self.client_weapon, smoke=smoke, dyaw=self._pend_look,
                    cycle=cycle, reload=reload)
         self._pend_look = 0.0

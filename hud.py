@@ -493,7 +493,7 @@ def draw_scoreboard(surf, renderer, game):
 
     if game.hint_alpha > 0:
         a = int(255 * clamp(game.hint_alpha, 0.0, 1.0))
-        text(surf, "WASD 移动   鼠标 转视角   左键 开火   空格 跳   Ctrl 蹲   G 烟雾弹   C 切枪   R 换弹   M 地图   ESC 菜单",
+        text(surf, "WASD 移动   鼠标 转视角   左键 开火   空格 跳   Ctrl 蹲   Shift 慢走   G 烟雾弹   C 切枪   R 换弹   M 地图   ESC 菜单",
              15, (w * 0.5, renderer.h - 34), C.C_DIM, anchor="cm", alpha=a)
 
 
@@ -801,7 +801,7 @@ def draw_title(surf, renderer, game):
     diff = game.difficulty
     text(surf, f"[  ]    AI 难度： {DIFF_LABEL.get(diff, diff)}", 18,
          (w * 0.5, h * 0.75), C.C_TEXT, anchor="cm")
-    text(surf, "WASD 移动 · 鼠标 转视角 · 左键 开火 · 右键 开镜 · 空格 跳 · Ctrl 蹲 · G 烟雾弹 · ESC 菜单",
+    text(surf, "WASD 移动 · 鼠标 转视角 · 左键 开火 · 右键 开镜 · 空格 跳 · Ctrl 蹲 · Shift 慢走 · G 烟雾弹 · ESC 菜单",
          13, (w * 0.5, h * 0.83), C.C_DIM, anchor="cm")
     text(surf, "H 返回主菜单 · 6 战绩 · Q 退出", 15, (w * 0.5, h * 0.87), C.C_DIM, anchor="cm")
 

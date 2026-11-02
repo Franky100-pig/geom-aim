@@ -35,6 +35,7 @@ INVERT_Y = False
 # ---------------- 移动 ----------------
 EYE_HEIGHT = 0.5       # 眼高（0 = 贴地，1 = 贴顶）
 MOVE_SPEED = 4.6       # 最高速度（世界单位 / 秒）
+WALK_MUL = 0.5        # 按住 Shift 慢走（CS2 默认）的速度乘子
 ACCEL = 60.0
 FRICTION = 11.0
 PLAYER_RADIUS = 0.24

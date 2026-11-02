@@ -221,6 +221,8 @@ class Match:
         if not a.alive:
             return
         speed = C.HUMAN_MOVE_SPEED
+        if inp.get("walk"):
+            speed *= C.WALK_MUL            # 联网玩家按住 Shift 也慢走（CS2 默认）
         fx, fy = math.cos(a.yaw), math.sin(a.yaw)        # 前
         rx, ry = -math.sin(a.yaw), math.cos(a.yaw)       # 右
         mvx = float(inp.get("mvx", 0.0))

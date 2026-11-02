@@ -266,6 +266,28 @@ def test_crouch():
     check("蹲下命中轮廓更小", C.BOT_H * C.CROUCH_H_MUL < C.BOT_H)
 
 
+def test_walk_slows_movement():
+    """按住 Shift 慢走（CS2 默认）：稳态速度约为正常的一半（C.WALK_MUL）。"""
+    pygame.init()
+    p = Player()
+    p.weapon = match_weapon("rifle")
+    cam = engine.Camera(*GS.center_free())
+    keys = FakeKeys()
+    keys[pygame.K_w] = True
+
+    def steady(walk):
+        p.vx = p.vy = 0.0
+        for _ in range(40):
+            p.update_move(1 / 60, cam, GS, keys, crouch=False, walk=walk)
+        return (p.vx ** 2 + p.vy ** 2) ** 0.5
+
+    fast = steady(False)
+    slow = steady(True)
+    check("慢走速度明显低于正常走", slow < fast * 0.8, f"{fast:.3f} -> {slow:.3f}")
+    check("慢走 ≈ 正常 × WALK_MUL", abs(slow - fast * C.WALK_MUL) < 0.3,
+          f"expect {fast * C.WALK_MUL:.3f}, got {slow:.3f}")
+
+
 # ---------------------------------------------------------------- HUD
 
 def test_hud():

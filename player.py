@@ -45,6 +45,7 @@ class Player:
         self.ground_z = 0.0    # 脚下地形高度（高度图采样），相机随地形升降
         # —— 蹲（按左 Ctrl，CS2 默认）：下沉相机 + 收紧扩散 + 缩小命中轮廓 ——
         self.crouch = False
+        self.walk = False           # 按住 Shift 慢走（CS2 默认）
         # 当前武器。练习模式默认这把的数值逐项等于 config 里的常量，
         # 所以接进来之后 5 个练习模式的手感一个像素都没变。
         self.weapon = practice_rifle()
@@ -55,15 +56,19 @@ class Player:
 
     # ------------------------------------------------------------ 移动
 
-    def update_move(self, dt, cam, gmap, keys, crouch=None):
+    def update_move(self, dt, cam, gmap, keys, crouch=None, walk=None):
         # 蹲键 = 左 Ctrl（CS2 默认键位）。按住生效、松开起身：下沉相机 +
         # 收紧扩散 + 缩小命中轮廓。注：macOS 上 Ctrl 组合键可能触发系统快捷键，
         # 若觉得碍事可告诉我，我再把 E 也加成别名。
-        # 注意：pygame 的 K_LCTRL 是位掩码常量（≈1e9），不能直接当 get_pressed()
-        # 的下标（列表只有 512 长，会 IndexError）。检测修饰键必须走 get_mods()。
+        # 注意：pygame 的 K_LCTRL / K_LSHIFT 是位掩码常量（≈1e9），不能直接当
+        # get_pressed() 的下标（列表只有 512 长，会 IndexError）。检测修饰键必须
+        # 走 get_mods()。crouch / walk 也可由调用方显式传入（测试用）。
         if crouch is None:
             crouch = bool(pygame.key.get_mods() & pygame.KMOD_CTRL)
+        if walk is None:
+            walk = bool(pygame.key.get_mods() & pygame.KMOD_SHIFT)
         self.crouch = crouch
+        self.walk = walk
         fwd = (1 if keys[pygame.K_w] else 0) - (1 if keys[pygame.K_s] else 0)
         stf = (1 if keys[pygame.K_d] else 0) - (1 if keys[pygame.K_a] else 0)
 
@@ -81,6 +86,8 @@ class Player:
             # ads 仍是真，会一直以 0.55 倍速移动（Bug 2）。
             scoped = self.ads and self.weapon.zoom > 1.0
             maxv = C.MOVE_SPEED * (C.SNIPER_MOVE_MUL if scoped else 1.0)
+            if self.walk:
+                maxv *= C.WALK_MUL          # 按住 Shift 慢走（CS2 默认）
             k = min(1.0, C.ACCEL * dt / maxv)
             self.vx += (wx * maxv - self.vx) * k
             self.vy += (wy * maxv - self.vy) * k
