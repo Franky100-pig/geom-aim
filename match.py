@@ -667,14 +667,22 @@ class Match:
         cancel_reload(a)
         return True
 
-    def cycle_weapon(self, a) -> bool:
-        """C 键循环切枪：在已买的枪里转到下一把。只有一把时切了也是它。"""
+    def cycle_weapon(self, a, dir: int = 1) -> bool:
+        """C 键循环切枪：在已买的枪里按方向转到下一把。dir>0 下一把，dir<0 上一把。
+
+        只有一把时切了也是它。鼠标滚轮也是走这里（dir 由滚轮方向决定）。
+        """
         if len(a.loadout) < 2:
             return False
-        a.w_idx = (a.w_idx + 1) % len(a.loadout)
+        step = 1 if dir >= 0 else -1
+        a.w_idx = (a.w_idx + step) % len(a.loadout)
         self._equip(a, a.loadout[a.w_idx])
         cancel_reload(a)
         return True
+
+    def player_cycle_dir(self, dir: int = 1) -> bool:
+        """玩家切枪：dir>0 下一把（滚轮下/原 C 键），dir<0 上一把（滚轮上）。"""
+        return self.cycle_weapon(self.player_agent, dir)
 
     def lastinv(self, a) -> bool:
         """Q 键：切回上一把用过的枪（CS2 lastinv / 快速切枪）。
