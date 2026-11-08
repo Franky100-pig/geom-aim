@@ -562,8 +562,8 @@ def draw_match_hud(surf, renderer, game):
     wname = game.player.weapon.name
     text(surf, wname, 16, (w - 26, h - 30), C.C_DIM, anchor="br")
 
-    # —— 买枪菜单 ——
-    if m.state == "prep":
+    # —— 买枪菜单（B 键开关；买枪阶段默认开，关掉可看清场地）——
+    if m.state == "prep" and getattr(game, "buy_menu_open", True):
         _draw_buy_menu(surf, renderer, m)
 
     # —— 回合结算条幅 ——

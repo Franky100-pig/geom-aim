@@ -128,6 +128,8 @@ class Game:
         self.stats_store = LocalStatsStore()
         self.history_scroll = 0          # 历史面板滚动偏移（行）
         self.exported_csv_path: str | None = None   # 历史面板 E 导出后的文件路径
+        self.buy_menu_open = True        # B 键开关买枪菜单（买枪阶段默认显示）
+        self._prev_phase = None          # 用于每回合进入买枪阶段时自动重开菜单
 
         # 标题界面：不抓鼠标（要看得到光标、能选），背后用 botz 当静态预览背景
         self._grab(False)
@@ -797,6 +799,10 @@ class Game:
 
         # ---------- 对战：1-5 切已拥有的枪；买枪阶段还能买新的 ----------
         if self.match is not None and self.match.mode == "match":
+            # B：买枪阶段开关买枪菜单（CS2 默认）
+            if key == pygame.K_b and self.match.state == "prep":
+                self.buy_menu_open = not self.buy_menu_open
+                return
             if pygame.K_1 <= key <= pygame.K_5:
                 idx = key - pygame.K_1
                 if idx < len(BUY_ORDER):
@@ -847,6 +853,13 @@ class Game:
                 return
 
         if key == pygame.K_ESCAPE:
+            # 买枪菜单开着时，ESC 先关菜单（不进游戏暂停），符合 CS2 习惯；
+            # 仅对战买枪阶段有菜单，练习/积分赛的 ESC 仍正常开关暂停菜单
+            if (getattr(self, "buy_menu_open", False)
+                    and self.match is not None and self.match.mode == "match"
+                    and self.match.state == "prep"):
+                self.buy_menu_open = False
+                return
             self.state = "menu" if self.state == "play" else "play"
             self._grab(self.state == "play")
             if self.state == "play":
@@ -1480,6 +1493,13 @@ class Game:
                 hud.draw_attack_indicator(surf, r, self.cam, self.match.attack_pings)
             hud.draw_smoke_slot(surf, r, self)
         self.fx.draw_hud_fx(surf, hud.font(20), r.w * 0.5, r.h * 0.5)
+
+        # 每回合进入买枪阶段时自动重开买枪菜单（关掉后新回合会再弹出来）
+        if self.match is not None:
+            phase = self.match.state
+            if phase == "prep" and self._prev_phase != "prep":
+                self.buy_menu_open = True
+            self._prev_phase = phase
 
         if self.match is not None:
             if self.match.mode == "score":
