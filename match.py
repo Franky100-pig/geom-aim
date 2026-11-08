@@ -402,6 +402,7 @@ class Match:
             a.loadout = ["knife"]
             a.w_idx = 0
             a.weapon = MATCH_WEAPONS["knife"]
+            a.last_weapon_key = "knife"   # Q 键从此可切回初始刀
             a.mags = {"knife": 0}
             a.reload_t = 0.0
 
@@ -645,6 +646,13 @@ class Match:
             else:
                 a.money = min(C.ECON_MAX, a.money + amount)
 
+    def _equip(self, a, key: str):
+        """换上某把已存在的枪：先记录上一把（Q lastinv 用），再更新武器与 w_idx。"""
+        if a.weapon is not None:
+            a.last_weapon_key = a.weapon.key
+        a.weapon = MATCH_WEAPONS[key]
+        a.w_idx = a.loadout.index(key)
+
     def _select(self, a, key: str) -> bool:
         """切到库存里已有的某把枪。库存里没有就返回 False（不花钱、不改状态）。
 
@@ -653,8 +661,7 @@ class Match:
         """
         if key not in a.loadout:
             return False
-        a.weapon = MATCH_WEAPONS[key]
-        a.w_idx = a.loadout.index(key)
+        self._equip(a, key)
         cancel_reload(a)
         return True
 
@@ -663,9 +670,22 @@ class Match:
         if len(a.loadout) < 2:
             return False
         a.w_idx = (a.w_idx + 1) % len(a.loadout)
-        a.weapon = MATCH_WEAPONS[a.loadout[a.w_idx]]
+        self._equip(a, a.loadout[a.w_idx])
         cancel_reload(a)
         return True
+
+    def lastinv(self, a) -> bool:
+        """Q 键：切回上一把用过的枪（CS2 lastinv / 快速切枪）。
+
+        只有刚切换过（last_weapon_key 非空）才生效，否则返回 False 不动。
+        """
+        if a.last_weapon_key is None:
+            return False
+        return self._select(a, a.last_weapon_key)
+
+    def player_lastinv(self) -> bool:
+        """玩家 Q 键：切回上一把武器。"""
+        return self.lastinv(self.player_agent)
 
     def player_cycle(self) -> bool:
         """玩家 C 键：循环切换已拥有的武器。"""
@@ -697,8 +717,7 @@ class Match:
         else:
             a.money -= w.price
         a.loadout.append(key)
-        a.weapon = w
-        a.w_idx = a.loadout.index(key)
+        self._equip(a, key)
         a.mags[key] = w.mag
         cancel_reload(a)
         return True

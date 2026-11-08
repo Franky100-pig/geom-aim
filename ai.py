@@ -109,6 +109,7 @@ class Agent:
         # w_idx 指向当前那把。
         self.loadout: list[str] = ["pistol"]
         self.w_idx = 0
+        self.last_weapon_key: str | None = None   # Q 键快速切回的上一把
 
         # 弹药（仅 3v3 对战生效）：mags[武器key] = 弹匣里的余弹。
         # 不在 dict 里的枪视为满弹（积分赛/练习不做弹药限制）。
