@@ -493,7 +493,7 @@ def draw_scoreboard(surf, renderer, game):
 
     if game.hint_alpha > 0:
         a = int(255 * clamp(game.hint_alpha, 0.0, 1.0))
-        text(surf, "WASD 移动   鼠标 转视角   左键 开火   空格 跳   Ctrl 蹲   Shift 慢走   G 烟雾弹   C 切枪   R 换弹   M 地图   ESC 菜单",
+        text(surf, "WASD 移动   鼠标 转视角   左键 开火   空格 跳   Ctrl 蹲   Shift 慢走   G 烟雾弹   滚轮/C 切枪   Q 上一把   R 换弹   M 地图   ESC 菜单",
              15, (w * 0.5, renderer.h - 34), C.C_DIM, anchor="cm", alpha=a)
 
 
@@ -600,7 +600,7 @@ def _draw_buy_menu(surf, renderer, m):
     px, py = (w - pw) * 0.5, h - ph - 60
     pygame.draw.rect(surf, C.C_PANEL, (px, py, pw, ph))
     pygame.draw.rect(surf, C.C_ACCENT, (px, py, pw, ph), 2)
-    text(surf, "买枪（1-5）  ·  6 烟雾弹   ·   没买枪 = 刀", 18,
+    text(surf, "买枪（1-5）  ·  6 烟雾弹   ·   没买枪 = 刀   ·   Q 上一把   ·   B 收起菜单", 18,
          (px + 18, py + 12), C.C_ACCENT)
     text(surf, f"$ {m.player_money}", 18, (px + pw - 18, py + 12), C.C_TEXT, anchor="tr")
 

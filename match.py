@@ -257,9 +257,11 @@ class Match:
             if not self._select(a, key) and self.state == "prep":
                 self._buy(a, key)
 
-        # C 循环切枪 / R 换弹（真人客户端经输入上行，主机代为执行）
+        # C 循环切枪 / Q 切回上一把 / R 换弹（真人客户端经输入上行，主机代为执行）
         if inp.get("cycle"):
             self.cycle_weapon(a)
+        if inp.get("lastinv"):
+            self.lastinv(a)
         if inp.get("reload"):
             start_reload(a)
 

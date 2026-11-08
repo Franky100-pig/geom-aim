@@ -106,6 +106,7 @@ class Game:
         self._smoke_pending = False  # 客户端 G 键边沿（一次性上报）
         self.minimap_big = False       # M 键：小地图放大一倍
         self._cycle_pending = False  # 客户端 C 键边沿：循环切枪
+        self._lastinv_pending = False  # 客户端 Q 键边沿：切回上一把
         self._reload_pending = False # 客户端 R 键边沿：换弹
         self.connect_error = ""
         self.score = 0
@@ -328,6 +329,10 @@ class Game:
         self.client_uid = welcome.get("uid", 0)   # 主机分配的、专属于本机的 Agent 编号
         self.net_mode = "client"
         self.client_weapon = "rifle"
+        self._cycle_pending = False
+        self._lastinv_pending = False
+        self._reload_pending = False
+        self._smoke_pending = False
         self.state = "client"
         self._grab(True)
 
@@ -364,11 +369,13 @@ class Game:
         self._smoke_pending = False
         cycle = self._cycle_pending
         self._cycle_pending = False
+        lastinv = self._lastinv_pending
+        self._lastinv_pending = False
         reload = self._reload_pending
         self._reload_pending = False
         inp = dict(mvx=mvx, mvy=mvy, crouch=crouch, walk=walk, jump=jump, fire=fire,
                    weapon=self.client_weapon, smoke=smoke, dyaw=self._pend_look,
-                   cycle=cycle, reload=reload)
+                   cycle=cycle, lastinv=lastinv, reload=reload)
         self._pend_look = 0.0
 
         self._net_acc += dt
@@ -719,6 +726,9 @@ class Game:
             if key == pygame.K_r:
                 self._reload_pending = True
                 return
+            if key == pygame.K_q:
+                self._lastinv_pending = True
+                return
             if key == pygame.K_ESCAPE:
                 self.to_title()
             return
@@ -760,9 +770,17 @@ class Game:
                         self.player.bolt = 0.0
                         self.player.ads = False   # 切枪即退镜，避免开镜减速残留
                         self.audio.play("spawn")
-                return
+                    return
             if key == pygame.K_6:
                 return  # 积分赛不配烟雾弹
+            # Q：切回上一把武器（CS2 lastinv）
+            if key == pygame.K_q:
+                if self.match.player_lastinv():
+                    self.player.weapon = self.match.player_agent.weapon
+                    self.player.bolt = 0.0
+                    self.player.ads = False   # 切枪即退镜，避免开镜减速残留
+                    self.audio.play("spawn")
+                return
 
         # ---------- 对战：1-5 切已拥有的枪；买枪阶段还能买新的 ----------
         if self.match is not None and self.match.mode == "match":
@@ -791,6 +809,14 @@ class Game:
                     else:
                         self.fx.popup(self.renderer.w * 0.5, self.renderer.h * 0.60,
                                       "钱不够", C.C_WARN)
+                return
+            # Q：切回上一把武器（CS2 lastinv）。买枪/交火中都行。
+            if key == pygame.K_q and self.state == "play":
+                if self.match.player_lastinv():
+                    self.player.weapon = self.match.player_agent.weapon
+                    self.player.bolt = 0.0
+                    self.player.ads = False   # 切枪即退镜，避免开镜减速残留
+                    self.audio.play("spawn")
                 return
             # C：在已买的枪里循环切换（买枪阶段和交火中都行）
             if key == pygame.K_c and self.state == "play":
