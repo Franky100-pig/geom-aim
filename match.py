@@ -257,9 +257,12 @@ class Match:
             if not self._select(a, key) and self.state == "prep":
                 self._buy(a, key)
 
-        # C 循环切枪 / Q 切回上一把 / R 换弹（真人客户端经输入上行，主机代为执行）
-        if inp.get("cycle"):
-            self.cycle_weapon(a)
+        # C/滚轮 循环切枪 / Q 切回上一把 / R 换弹（真人客户端经输入上行，主机代为执行）
+        d = int(inp.get("cycle_dir", 0) or 0)
+        if d:
+            self.cycle_weapon(a, d)
+        elif inp.get("cycle"):           # 兼容旧协议
+            self.cycle_weapon(a, 1)
         if inp.get("lastinv"):
             self.lastinv(a)
         if inp.get("reload"):

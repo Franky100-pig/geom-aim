@@ -105,7 +105,7 @@ class Game:
         self.client_weapon = "rifle"
         self._smoke_pending = False  # 客户端 G 键边沿（一次性上报）
         self.minimap_big = False       # M 键：小地图放大一倍
-        self._cycle_pending = False  # 客户端 C 键边沿：循环切枪
+        self._cycle_dir = 0          # 客户端 C 键/滚轮边沿：-1 上一把 / +1 下一把
         self._lastinv_pending = False  # 客户端 Q 键边沿：切回上一把
         self._reload_pending = False # 客户端 R 键边沿：换弹
         self.connect_error = ""
@@ -329,7 +329,7 @@ class Game:
         self.client_uid = welcome.get("uid", 0)   # 主机分配的、专属于本机的 Agent 编号
         self.net_mode = "client"
         self.client_weapon = "rifle"
-        self._cycle_pending = False
+        self._cycle_dir = 0
         self._lastinv_pending = False
         self._reload_pending = False
         self._smoke_pending = False
@@ -367,15 +367,15 @@ class Game:
         fire = bool(mbt[0])
         smoke = self._smoke_pending
         self._smoke_pending = False
-        cycle = self._cycle_pending
-        self._cycle_pending = False
+        cycle_dir = self._cycle_dir
+        self._cycle_dir = 0
         lastinv = self._lastinv_pending
         self._lastinv_pending = False
         reload = self._reload_pending
         self._reload_pending = False
         inp = dict(mvx=mvx, mvy=mvy, crouch=crouch, walk=walk, jump=jump, fire=fire,
                    weapon=self.client_weapon, smoke=smoke, dyaw=self._pend_look,
-                   cycle=cycle, lastinv=lastinv, reload=reload)
+                   cycle_dir=cycle_dir, lastinv=lastinv, reload=reload)
         self._pend_look = 0.0
 
         self._net_acc += dt
@@ -590,6 +590,19 @@ class Game:
                     self.player.firing = False
                 # 右键已改为「轻点切换」，松开不再改 ads，否则会和切换逻辑冲突
 
+            elif ev.type == pygame.MOUSEWHEEL:
+                # 鼠标滚轮切枪（CS2 默认）：上滚=上一把，下滚=下一把。
+                # 主机/单机直接本地切；联机客户端记边沿、随输入上行给主机代执行。
+                d = -1 if ev.y > 0 else 1
+                if self.state == "play" and self.match is not None and self.net_mode != "client":
+                    if self.match.player_cycle_dir(d):
+                        self.player.weapon = self.match.player_agent.weapon
+                        self.player.bolt = 0.0
+                        self.player.ads = False   # 切枪即退镜，避免开镜减速残留
+                        self.audio.play("spawn")
+                elif self.state == "client":
+                    self._cycle_dir = d
+
 
             elif ev.type == pygame.KEYDOWN:
                 self.on_key(ev.key)
@@ -721,7 +734,7 @@ class Game:
                 self._smoke_pending = True
                 return
             if key == pygame.K_c:
-                self._cycle_pending = True
+                self._cycle_dir = 1   # C 键 = 切到下一把（与滚轮下等价）
                 return
             if key == pygame.K_r:
                 self._reload_pending = True
